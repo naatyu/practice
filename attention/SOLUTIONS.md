@@ -126,3 +126,22 @@ compute it again. Outputs for query positions before that token must remain
 identical, while an output allowed to attend to the changed token should
 change. This tests the causal invariant directly rather than comparing two
 implementations.
+
+## Attention dropout
+
+Standard attention dropout is applied to probabilities after softmax and
+before their matrix multiplication with values. Applying ordinary dropout to
+logits before softmax would set dropped logits to zero rather than exclude
+them, and softmax would still give those positions nonzero probability. Using
+negative infinity instead would renormalize over the surviving positions and
+define a different stochastic operation.
+
+Post-softmax inverted dropout zeros sampled attention connections and scales
+surviving weights by `1 / (1 - p)`. A sampled row therefore does not generally
+sum to one, but each weight—and consequently the attention output—is preserved
+in expectation. Dropout is active during training and disabled during
+evaluation.
+
+Because the attention implementation is stateless, it can accept an effective
+dropout probability with a default of zero. It does not need to own a module
+training flag if the caller is responsible for passing zero during evaluation.

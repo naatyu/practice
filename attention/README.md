@@ -37,3 +37,13 @@ preserving bidirectional attention as the default.
 2. Why is causal attention needed in autoregressive language models?
 3. At what point in the computation should the causal mask be applied?
 
+## Exercise 3: Attention dropout
+
+Add optional attention dropout while preserving deterministic behavior by
+default.
+
+### Discussion questions
+
+1. At what point should attention dropout be applied?
+2. How should its behavior differ between training and evaluation?
+3. Do the sampled attention weights still sum to one after dropout?

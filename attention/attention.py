@@ -4,7 +4,12 @@ import torch
 
 
 def attention(
-    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    dropout_p: float = 0.0,
+    *,
+    causal: bool = False,
 ) -> torch.Tensor:
     """Implement bidirectional scaled dot-product attention.
 
@@ -24,6 +29,8 @@ def attention(
         ).tril()
         scaled_attention_scores = scaled_attention_scores.masked_fill(~mask, -torch.inf)
 
-    attention_probabilities = torch.softmax(scaled_attention_scores, dim=-1)
+    attention_probabilities = torch.nn.functional.dropout(
+        torch.softmax(scaled_attention_scores, dim=-1), p=dropout_p
+    )
 
     return attention_probabilities @ v
