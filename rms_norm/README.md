@@ -5,13 +5,13 @@ reasoning and corrections are kept separately in `SOLUTIONS.md`.
 
 ## Exercise
 
-Implement RMSNorm over the final dimension of a tensor without using
-`torch.nn.RMSNorm` or `torch.nn.functional.rms_norm`.
+Implement RMSNorm as an `nn.Module` over the final dimension of a tensor
+without using `torch.nn.RMSNorm` or `torch.nn.functional.rms_norm`.
 
 ```text
-x:      (..., hidden_dim)
-weight: (hidden_dim,)
-output: (..., hidden_dim)
+input:          (..., d_model)
+learned weight: (d_model,)
+output:         (..., d_model)
 ```
 
 ### Discussion questions
@@ -26,3 +26,4 @@ output: (..., hidden_dim)
    multiplication from elementwise multiplication?
 7. What does PyTorch's `normalized_shape` argument represent?
 8. Does this implementation need a manually written backward pass?
+9. Why must the learned weight be registered as an `nn.Parameter`?

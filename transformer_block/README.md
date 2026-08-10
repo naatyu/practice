@@ -13,7 +13,7 @@ Use:
 - Causal self-attention
 - Two RMSNorm layers
 - Two residual connections
-- A position-wise feed-forward network with GELU
+- A position-wise SwiGLU feed-forward network
 - Feed-forward hidden dimension supplied to the constructor
 
 Do not use `torch.nn.TransformerEncoderLayer` or
@@ -32,4 +32,3 @@ Input and output shape:
    block?
 3. Why must decoder self-attention be causal?
 4. Along which dimension does the feed-forward network operate?
-

@@ -1,4 +1,3 @@
-from .rms_norm import rms_norm
+from .rms_norm import RMSNorm
 
-__all__ = ["rms_norm"]
-
+__all__ = ["RMSNorm"]

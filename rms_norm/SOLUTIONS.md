@@ -20,6 +20,18 @@ Epsilon is added to the mean square before taking the square root. The learned
 weight is a per-feature scale, so it is applied elementwise and broadcasts over
 all preceding dimensions; it is not a matrix multiplication.
 
+The reusable implementation is an `nn.Module`. It owns a learned
+`nn.Parameter` of shape `(D,)`, initialized to ones, and stores epsilon as a
+non-learned attribute. Registering the scale as an `nn.Parameter` makes it part
+of `model.parameters()`, moves it with the module between devices and dtypes,
+and includes it in the module state dictionary. An ordinary tensor attribute
+would not be optimized automatically.
+
+Initializing the scale to ones makes it an identity scaling at initialization:
+the initial output is the normalized input, while training can subsequently
+learn a different gain for every feature. The final implementation intentionally
+uses a module-only public API.
+
 ## Matrix multiplication versus elementwise multiplication
 
 Elementwise multiplication pairs features with the same index and performs no
