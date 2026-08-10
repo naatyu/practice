@@ -27,7 +27,9 @@ def attention(
             dtype=torch.bool,
             device=q.device,
         ).tril()
-        scaled_attention_scores = scaled_attention_scores.masked_fill(~mask, -torch.inf)
+        scaled_attention_scores = scaled_attention_scores.masked_fill_(
+            ~mask, -torch.inf
+        )
 
     attention_probabilities = torch.nn.functional.dropout(
         torch.softmax(scaled_attention_scores, dim=-1), p=dropout_p
