@@ -25,7 +25,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         table = torch.empty((max_seq_len, d_model))
         table[:, 0::2] = torch.sin(angles)
         table[:, 1::2] = torch.cos(angles)
-        self.register_buffer("table", table)
+        self.register_buffer("table", table, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         seq_len = x.shape[-2]
