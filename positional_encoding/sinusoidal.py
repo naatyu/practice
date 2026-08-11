@@ -34,4 +34,4 @@ class SinusoidalPositionalEncoding(nn.Module):
                 f"Expected sequence size to be at most {self.max_seq_len}, got: {seq_len}"
             )
 
-        return x + self.table[:seq_len].to(x.dtype)
+        return x + self.table[:seq_len].to(x.dtype)  # ty: ignore[not-subscriptable]
