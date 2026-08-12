@@ -11,6 +11,7 @@ class RotaryPositionalEncoding(nn.Module):
             raise ValueError(f"Expected d_head to be positive and even, got: {d_head}")
 
         self.max_seq_len = max_seq_len
+        self.d_head = d_head
         # Compute frequencies = 1 / base**(2i / d_head) = exp(2i / d_head * -log(base))
         frequencies = torch.exp(
             torch.arange(0, d_head, 2) / d_head * -math.log(base)

@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from attention import attention
+from positional_encoding import RotaryPositionalEncoding
 
 
 class MultiHeadAttention(nn.Module):
@@ -14,7 +15,13 @@ class MultiHeadAttention(nn.Module):
         (batch_size, sequence_length, d_model)
     """
 
-    def __init__(self, d_model: int, num_heads: int, dropout_p: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        dropout_p: float = 0.0,
+        rope: RotaryPositionalEncoding | None = None,
+    ) -> None:
         super().__init__()
         # check num heads
         if num_heads <= 0:
@@ -34,10 +41,21 @@ class MultiHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
         self.dropout_p = dropout_p
+
+        # Check rope dimension value
+        if rope is not None and rope.d_head != self.d_head:
+            raise ValueError(
+                f"Expected rope dimension and head dimension to match, got {rope.d_head} and {self.d_head} instead."
+            )
+
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out = nn.Linear(d_model, d_model)
 
-    def forward(self, x: torch.Tensor, causal: bool = False) -> torch.Tensor:
+        self.rope = rope
+
+    def forward(
+        self, x: torch.Tensor, causal: bool = False, position_offset: int = 0
+    ) -> torch.Tensor:
         B, S, d_model = x.shape
 
         qkv = self.qkv(x)  # [B,S,3d_model]
@@ -46,6 +64,9 @@ class MultiHeadAttention(nn.Module):
         q = q.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
         k = k.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
         v = v.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
+
+        if self.rope is not None:
+            q, k = self.rope(q, k, position_offset)
 
         dropout_p = self.dropout_p if self.training else 0.0
 

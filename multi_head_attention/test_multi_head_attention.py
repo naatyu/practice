@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from multi_head_attention import MultiHeadAttention
+from positional_encoding import RotaryPositionalEncoding
 
 
 def test_construction() -> None:
@@ -66,3 +67,32 @@ def test_against_torch() -> None:
     torch_output, _ = torch_mha(x, x, x, need_weights=False)
 
     torch.testing.assert_close(mha(x), torch_output)
+
+
+def test_wrong_rope_construction():
+    d_model = 64
+    num_heads = 32
+    seq_len = 10
+    dropout_p = 0.0
+
+    rope = RotaryPositionalEncoding(
+        d_head=((d_model // num_heads) + 2) & ~(1), max_seq_len=seq_len
+    )
+
+    with pytest.raises(ValueError, match="rope dimension"):
+        MultiHeadAttention(
+            d_model=d_model, num_heads=num_heads, dropout_p=dropout_p, rope=rope
+        )
+
+
+def test_rope_integration() -> None:
+    torch.manual_seed(0)
+    x = torch.randn((2, 5, 32))
+    rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
+    mha = MultiHeadAttention(d_model=32, num_heads=4, rope=rope).eval()
+
+    output = mha(x, position_offset=0)
+    shifted_output = mha(x, position_offset=5)
+
+    assert output.shape == x.shape
+    torch.testing.assert_close(output, shifted_output)
