@@ -118,7 +118,21 @@
 - Batched generation
 - Integration with KV caching
 
-### 13. FlashAttention
+### 13. Speculative decoding
+
+- Draft and target model roles
+- Proposing multiple tokens with the draft model
+- Verifying proposed tokens in one target-model forward pass
+- Acceptance probability for each draft token
+- Rejection sampling from the corrected residual distribution
+- Emitting the extra target token when every proposal is accepted
+- Why speculative decoding preserves the target model's distribution
+- Greedy speculative decoding as a simpler special case
+- KV-cache advancement, rollback, and synchronization
+- Expected speedup and when verification overhead removes the benefit
+- Tests against ordinary target-model decoding
+
+### 14. FlashAttention
 
 - Memory traffic versus arithmetic complexity
 - Query, key, and value tiling
@@ -130,7 +144,7 @@
 
 ## Systems and scaling
 
-### 14. Mixed precision and numerical stability
+### 15. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
 - Loss scaling
@@ -138,7 +152,7 @@
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
-### 15. Quantization
+### 16. Quantization
 
 - Weight-only versus weight-and-activation quantization
 - Per-tensor, per-channel, and group-wise scales
@@ -146,7 +160,7 @@
 - GPTQ and AWQ concepts
 - KV-cache quantization
 
-### 16. Distributed training
+### 17. Distributed training
 
 - Data parallelism
 - Tensor parallelism
@@ -155,31 +169,30 @@
 - ZeRO and FSDP
 - Computation and communication costs
 
-### 17. Efficient inference
+### 18. Efficient inference
 
 - Continuous batching
 - Paged KV caches
 - Prefix caching
-- Speculative decoding
 - Decode-time memory-bandwidth bottlenecks
 
 ## Advanced architectures and adaptation
 
-### 18. Mixture of Experts
+### 19. Mixture of Experts
 
 - Top-k routing
 - Expert capacity
 - Load-balancing losses
 - Expert parallelism
 
-### 19. Fine-tuning
+### 20. Fine-tuning
 
 - LoRA
 - QLoRA
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 20. Extended training and evaluation
+### 21. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
@@ -193,12 +206,14 @@
 
 ```text
 stable cross-entropy and training -> KV cache -> MQA/GQA -> byte-level BPE
--> generation -> FlashAttention
+-> generation -> speculative decoding -> FlashAttention
 ```
 
 The order is intentional: stable loss and a basic training loop first prove
 that the decoder can learn; KV caching then exposes the main autoregressive
 inference memory problem; MQA and GQA reduce that cost; tokenization completes
 the input side of the model; generation combines the decoder, tokenizer, and
-cache; and FlashAttention deepens the analysis of attention performance during
-training and prefill.
+cache; speculative decoding builds on generation and cache management to
+accelerate sampling without changing the target distribution; and
+FlashAttention deepens the analysis of attention performance during training
+and prefill.
