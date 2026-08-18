@@ -147,9 +147,29 @@
 - Causal block handling
 - Comparison with ordinary attention
 
+### 16. FLOP, parameter, and memory accounting
+
+- Treat performance accounting as a recurring part of every layer exercise
+- FLOPs for linear projections, including multiply-add conventions
+- QKV and output-projection FLOPs
+- Attention score and probability-value matrix-multiplication FLOPs
+- GELU MLP and SwiGLU parameter and FLOP counts
+- Normalization, activation, and elementwise-operation costs
+- Vocabulary-projection and cross-entropy costs
+- Forward-pass versus forward-and-backward training FLOPs
+- FLOPs per token and per sequence for a complete decoder
+- Which terms scale linearly or quadratically with sequence length
+- Prefill versus autoregressive decode FLOPs
+- How KV caching changes computation without changing model parameters
+- How MHA, GQA, and MQA change parameters, cache memory, and computation
+- Activation and KV-cache memory estimates by dtype
+- Arithmetic intensity, memory bandwidth, and why equal FLOPs can have
+  different runtimes
+- Comparing hand calculations with profiler-reported operator FLOPs
+
 ## Systems and scaling
 
-### 16. Mixed precision and numerical stability
+### 17. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
 - Loss scaling
@@ -157,7 +177,7 @@
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
-### 17. Quantization
+### 18. Quantization
 
 - Weight-only versus weight-and-activation quantization
 - Per-tensor, per-channel, and group-wise scales
@@ -165,7 +185,7 @@
 - GPTQ and AWQ concepts
 - KV-cache quantization
 
-### 18. Distributed training
+### 19. Distributed training
 
 - Data parallelism
 - Tensor parallelism
@@ -174,7 +194,7 @@
 - ZeRO and FSDP
 - Computation and communication costs
 
-### 19. Efficient inference
+### 20. Efficient inference
 
 - Continuous batching
 - Paged KV caches
@@ -183,21 +203,21 @@
 
 ## Advanced architectures and adaptation
 
-### 20. Mixture of Experts
+### 21. Mixture of Experts
 
 - Top-k routing
 - Expert capacity
 - Load-balancing losses
 - Expert parallelism
 
-### 21. Fine-tuning
+### 22. Fine-tuning
 
 - LoRA
 - QLoRA
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 22. Extended training and evaluation
+### 23. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
@@ -211,7 +231,7 @@
 
 ```text
 KV cache -> MQA/GQA -> byte-level BPE -> generation -> speculative decoding
--> FlashAttention
+-> FlashAttention -> FLOP and memory accounting
 ```
 
 The order is intentional: the completed training loop proves that the decoder
@@ -221,4 +241,6 @@ tokenization completes the input side of the model; generation combines the
 decoder, tokenizer, and cache; speculative decoding builds on generation and
 cache management to accelerate sampling without changing the target
 distribution; and FlashAttention deepens the analysis of attention performance
-during training and prefill.
+during training and prefill. FLOP and memory accounting then consolidates the
+implemented components into quantitative model, training, prefill, and decode
+cost estimates.

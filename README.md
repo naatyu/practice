@@ -1,24 +1,74 @@
-# Deep learning implementation practice
+# LLM implementation practice
 
-Interview-style PyTorch exercises for implementing core Transformer operations
-from first principles. Each exercise keeps the prompt and completed discussion
-separate:
+This is my working repository for learning how modern language models actually
+work by implementing their core components from scratch. The exercises are
+often run in an interview-style format, which helps me test both my code and my
+understanding.
 
-- `README.md`: exercise requirements and interview questions
-- `SOLUTIONS.md`: reasoning, corrections, and testing lessons
-- Python modules: the implementations themselves
+The point is not to build another production framework. It is to implement the
+important pieces myself, understand the math behind them, reason about tensor
+shapes and numerical stability, and be able to explain the tradeoffs.
 
-## Exercises
+## How I use the repository
 
-1. `attention/`: scaled dot-product attention, causal masking, and dropout
-2. `rms_norm/`: RMSNorm as a trainable PyTorch module
-3. `multi_head_attention/`: multi-head self-attention
-4. `mlp/`: a GELU Transformer MLP and fused-projection SwiGLU
-5. `transformer_block/`: a pre-norm causal decoder block
-6. `flash-attention/`: online-softmax and tiled-attention reasoning in progress
+Each topic starts as a focused implementation problem, such as causal attention
+or RoPE. I work through it while an AI acts as both an interviewer and a
+learning partner: it asks follow-up questions, challenges incorrect reasoning,
+explains unfamiliar ideas, and helps turn the final answers into useful notes.
 
-Run the complete test suite from the repository root with:
+Most topic folders follow the same structure:
+
+- `README.md` contains the exercise prompt and discussion questions.
+- `SOLUTIONS.md` contains the corrected reasoning and lessons from the
+  interview.
+- The Python module contains the implementation.
+- Tests capture the important invariants, controlled examples, and comparisons
+  with trusted PyTorch implementations.
+
+All implementation code is handwritten as part of the learning process. Some
+tests are written with AI assistance so I can spend more practice
+time on the algorithms themselves. Those tests are intentionally kept readable
+because they are also examples I can revisit when reviewing how to test tensor
+code.
+
+## Topics covered
+
+- Scaled dot-product and causal attention
+- Multi-head self-attention
+- RMSNorm
+- GELU MLPs and SwiGLU
+- Pre-norm decoder Transformer blocks
+- Learned and sinusoidal positional encodings
+- Rotary positional encoding and relative-position reasoning
+- RoPE integration and sequence offsets
+- A complete decoder-only language model
+- Weight tying and shifted next-token loss
+- Stable cross-entropy with ignored targets
+- Basic training steps, AdamW, clipping, and gradient accumulation
+
+The repository is still growing. KV caching, GQA/MQA, byte-level BPE,
+generation, speculative decoding, FlashAttention, and performance accounting
+are among the next major exercises. The full ordered plan is in
+[ROADMAP.md](ROADMAP.md).
+
+## Running the exercises
+
+The project uses Python 3.12, PyTorch, `uv`, and pytest.
+
+Run the complete test suite from the repository root:
 
 ```bash
 uv run pytest
 ```
+
+Run one topic while working on it:
+
+```bash
+uv run pytest -q attention
+uv run pytest -q positional_encoding
+uv run pytest -q training
+```
+
+The implementations often avoid PyTorch's high-level equivalent on purpose.
+The goal is to understand and reproduce the underlying operation; the built-in
+version may still be used in tests as a reference oracle.
