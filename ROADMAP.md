@@ -56,19 +56,24 @@
 - Shifted next-token loss
 - RoPE integration and offset propagation
 
-## Next core sequence
-
-### 8. Stable cross-entropy and basic training
+### 8. Stable cross-entropy
 
 - Softmax, log-softmax, negative log-likelihood, and cross-entropy
 - The log-sum-exp trick for numerical stability
 - Implementing cross-entropy directly from logits without applying softmax
 - Selecting the target-class logit with `gather`
 - Mean, sum, and per-token loss reductions
-- Shifted causal language-model logits and targets
 - Padding masks and `ignore_index`
 - Comparison with `torch.nn.functional.cross_entropy`
 - Tests with extreme logits that would overflow a naive implementation
+- Value and gradient comparison with PyTorch
+- All-ignored targets and input-immutability tests
+
+## Next core sequence
+
+### 9. Basic language-model training
+
+- Shifted causal language-model logits and targets
 - Autograd and the purpose of `loss.backward()`
 - A minimal AdamW training loop
 - `zero_grad`, forward pass, loss, backward pass, and optimizer step
@@ -76,7 +81,7 @@
 - Gradient accumulation and gradient clipping
 - Overfitting a tiny batch as an end-to-end correctness test
 
-### 9. KV caching
+### 10. KV caching
 
 - Prefill versus decoding
 - Per-layer cache shapes
@@ -86,7 +91,7 @@
 - Full-sequence versus cached-logit equivalence
 - Cache memory cost
 
-### 10. Multi-query and grouped-query attention
+### 11. Multi-query and grouped-query attention
 
 - Separate query-head and KV-head counts
 - MHA, GQA, and MQA as points on one design spectrum
@@ -95,7 +100,7 @@
 - KV-cache memory savings
 - Quality, throughput, and memory tradeoffs
 
-### 11. Byte-level BPE
+### 12. Byte-level BPE
 
 - Bytes versus Unicode characters
 - Initial byte vocabulary
@@ -107,7 +112,7 @@
 - Round-trip tests
 - Efficient implementation strategies
 
-### 12. Generation
+### 13. Generation
 
 - Greedy decoding
 - Temperature
@@ -118,7 +123,7 @@
 - Batched generation
 - Integration with KV caching
 
-### 13. Speculative decoding
+### 14. Speculative decoding
 
 - Draft and target model roles
 - Proposing multiple tokens with the draft model
@@ -132,7 +137,7 @@
 - Expected speedup and when verification overhead removes the benefit
 - Tests against ordinary target-model decoding
 
-### 14. FlashAttention
+### 15. FlashAttention
 
 - Memory traffic versus arithmetic complexity
 - Query, key, and value tiling
@@ -144,7 +149,7 @@
 
 ## Systems and scaling
 
-### 15. Mixed precision and numerical stability
+### 16. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
 - Loss scaling
@@ -152,7 +157,7 @@
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
-### 16. Quantization
+### 17. Quantization
 
 - Weight-only versus weight-and-activation quantization
 - Per-tensor, per-channel, and group-wise scales
@@ -160,7 +165,7 @@
 - GPTQ and AWQ concepts
 - KV-cache quantization
 
-### 17. Distributed training
+### 18. Distributed training
 
 - Data parallelism
 - Tensor parallelism
@@ -169,7 +174,7 @@
 - ZeRO and FSDP
 - Computation and communication costs
 
-### 18. Efficient inference
+### 19. Efficient inference
 
 - Continuous batching
 - Paged KV caches
@@ -178,21 +183,21 @@
 
 ## Advanced architectures and adaptation
 
-### 19. Mixture of Experts
+### 20. Mixture of Experts
 
 - Top-k routing
 - Expert capacity
 - Load-balancing losses
 - Expert parallelism
 
-### 20. Fine-tuning
+### 21. Fine-tuning
 
 - LoRA
 - QLoRA
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 21. Extended training and evaluation
+### 22. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
@@ -205,15 +210,15 @@
 ## Immediate path
 
 ```text
-stable cross-entropy and training -> KV cache -> MQA/GQA -> byte-level BPE
--> generation -> speculative decoding -> FlashAttention
+basic training -> KV cache -> MQA/GQA -> byte-level BPE -> generation
+-> speculative decoding -> FlashAttention
 ```
 
-The order is intentional: stable loss and a basic training loop first prove
-that the decoder can learn; KV caching then exposes the main autoregressive
-inference memory problem; MQA and GQA reduce that cost; tokenization completes
-the input side of the model; generation combines the decoder, tokenizer, and
-cache; speculative decoding builds on generation and cache management to
-accelerate sampling without changing the target distribution; and
-FlashAttention deepens the analysis of attention performance during training
-and prefill.
+The order is intentional: a basic training loop first proves that the decoder
+and completed stable loss can learn together; KV caching then exposes the main
+autoregressive inference memory problem; MQA and GQA reduce that cost;
+tokenization completes the input side of the model; generation combines the
+decoder, tokenizer, and cache; speculative decoding builds on generation and
+cache management to accelerate sampling without changing the target
+distribution; and FlashAttention deepens the analysis of attention performance
+during training and prefill.

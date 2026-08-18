@@ -112,23 +112,57 @@ losses:
 With padding or ignored labels, the mean must later divide by the number of
 valid tokens rather than all tensor positions.
 
-## Resume checkpoint
+## Ignored targets
 
-`cross_entropy/cross_entropy.py` currently contains a partial
-`CrossEntropy(nn.Module)` implementation. The stabilization direction is
-correct, but the next session should finish these corrections:
+An ignored target such as `-100` is a sentinel rather than a valid vocabulary
+index, so it cannot be passed directly to `gather`. A Boolean mask retains the
+information about which token positions are valid, while a separate target
+tensor replaces ignored entries with any safe class index:
 
-1. Compute the maximum over `dim=-1` with `keepdim=True` and select the
-   returned values.
-2. Keep the shifted logits with their vocabulary dimension until the target
-   logits have been gathered.
-3. Treat the logged exponential sum as a log normalizer, not predicted
-   probabilities.
-4. Expand targets to `(B, S, 1)`, gather from the shifted logits, and squeeze
-   back to `(B, S)`.
-5. Subtract the shifted target logits from the log normalizer.
-6. Implement and validate `none`, `sum`, and `mean`, with `mean` as the
-   default.
+```python
+valid_mask = targets != ignore_index
+safe_targets = targets.masked_fill(~valid_mask, 0)
+```
 
-After that, write comparisons against PyTorch for every reduction and include
-an extreme-logit case proving the result stays finite.
+Class zero is only a temporary valid address for gathering. The mask, not the
+replacement value, records whether the position is ignored. After gathering,
+ignored token losses are set to zero:
+
+```python
+token_loss = token_loss.masked_fill(~valid_mask, 0.0)
+```
+
+The reductions then have these semantics:
+
+```text
+none: masked per-token losses shaped (B, S)
+sum:  sum of valid token losses
+mean: sum of valid token losses / number of valid tokens
+```
+
+Using `token_loss.mean()` would incorrectly include padding positions in the
+denominator. Calling `mean()` and then dividing by the valid count would divide
+twice. If every target is ignored, the mean computes `0 / 0` and yields `NaN`,
+matching PyTorch, while the sum is zero.
+
+Inputs should not be modified in place. Mutating `targets` would unexpectedly
+replace the caller's ignored labels and could corrupt later computations.
+Functional operations are also easier to reason about with autograd and
+compiler transformations; in-place operations should be reserved for cases
+where profiling demonstrates a meaningful benefit and their safety is clear.
+
+## Testing conclusions
+
+The completed implementation is tested against PyTorch for `none`, `sum`, and
+`mean` reductions. Tests also cover:
+
+1. Extreme logits that overflow a naive exponential implementation.
+2. Equality of gradients with PyTorch's reference loss.
+3. Invalid reduction configuration.
+4. Mixed valid and ignored targets, including a genuine class-zero target.
+5. Preservation of the caller's target tensor.
+6. The all-ignored behavior for every reduction.
+
+Testing every reduction caught a broadcasting bug that the scalar mean could
+hide accidentally. Testing target immutability separately caught an in-place
+mutation even when the numerical loss matched.
