@@ -167,9 +167,22 @@
   different runtimes
 - Comparing hand calculations with profiler-reported operator FLOPs
 
+### 17. Long-context RoPE scaling and YaRN
+
+- Why base RoPE can degrade beyond its training context length
+- Position interpolation and RoPE frequency scaling
+- NTK-aware and frequency-dependent scaling
+- YaRN (Yet another RoPE extensioN)
+- Interpolation versus extrapolation across frequency bands
+- Attention scaling for extended contexts
+- Updating cached sine and cosine tables
+- Interaction with position offsets and KV caching
+- Preserving short-context behavior while extending context length
+- Tests and evaluations across original and extended context lengths
+
 ## Systems and scaling
 
-### 17. Mixed precision and numerical stability
+### 18. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
 - Loss scaling
@@ -177,7 +190,7 @@
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
-### 18. Quantization
+### 19. Quantization
 
 - Weight-only versus weight-and-activation quantization
 - Per-tensor, per-channel, and group-wise scales
@@ -185,7 +198,7 @@
 - GPTQ and AWQ concepts
 - KV-cache quantization
 
-### 19. Distributed training
+### 20. Distributed training
 
 - Data parallelism
 - Tensor parallelism
@@ -194,7 +207,7 @@
 - ZeRO and FSDP
 - Computation and communication costs
 
-### 20. Efficient inference
+### 21. Efficient inference
 
 - Continuous batching
 - Paged KV caches
@@ -203,21 +216,21 @@
 
 ## Advanced architectures and adaptation
 
-### 21. Mixture of Experts
+### 22. Mixture of Experts
 
 - Top-k routing
 - Expert capacity
 - Load-balancing losses
 - Expert parallelism
 
-### 22. Fine-tuning
+### 23. Fine-tuning
 
 - LoRA
 - QLoRA
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 23. Extended training and evaluation
+### 24. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
@@ -231,7 +244,7 @@
 
 ```text
 KV cache -> MQA/GQA -> byte-level BPE -> generation -> speculative decoding
--> FlashAttention -> FLOP and memory accounting
+-> FlashAttention -> FLOP and memory accounting -> YaRN
 ```
 
 The order is intentional: the completed training loop proves that the decoder
@@ -244,3 +257,5 @@ distribution; and FlashAttention deepens the analysis of attention performance
 during training and prefill. FLOP and memory accounting then consolidates the
 implemented components into quantitative model, training, prefill, and decode
 cost estimates.
+YaRN then extends the completed RoPE work into long-context scaling and
+evaluation.
