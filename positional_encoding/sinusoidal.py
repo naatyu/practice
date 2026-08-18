@@ -1,5 +1,3 @@
-import math
-
 import torch
 from torch import nn
 
@@ -18,9 +16,8 @@ class SinusoidalPositionalEncoding(nn.Module):
             )
 
         self.max_seq_len = max_seq_len
-        frequencies = torch.exp(
-            (torch.arange(0, d_model, 2) / d_model) * -math.log(base)
-        )
+        even_indices = torch.arange(0, d_model, 2, dtype=torch.float32)
+        frequencies = base ** (-even_indices / d_model)
         angles = torch.arange(0, max_seq_len).unsqueeze(1) * frequencies
         table = torch.empty((max_seq_len, d_model))
         table[:, 0::2] = torch.sin(angles)

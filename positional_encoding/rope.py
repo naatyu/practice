@@ -1,5 +1,3 @@
-import math
-
 import torch
 from torch import nn
 
@@ -12,10 +10,9 @@ class RotaryPositionalEncoding(nn.Module):
 
         self.max_seq_len = max_seq_len
         self.d_head = d_head
-        # Compute frequencies = 1 / base**(2i / d_head) = exp(2i / d_head * -log(base))
-        frequencies = torch.exp(
-            torch.arange(0, d_head, 2) / d_head * -math.log(base)
-        )  # [d_head/2]
+        # Compute frequencies = 1 / base**(2i / d_head).
+        even_indices = torch.arange(0, d_head, 2, dtype=torch.float32)
+        frequencies = base ** (-even_indices / d_head)  # [d_head/2]
         angles = (
             torch.arange(0, max_seq_len).unsqueeze(1) * frequencies
         )  # [max_seq_len, d_head/2]

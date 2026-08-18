@@ -1,9 +1,70 @@
-# Rotary positional encoding interview practice
+# Positional encoding interview practice
 
 This file contains only the exercise prompt and interview questions. Completed
 answers and explanations are kept separately in `SOLUTIONS.md`.
 
-## Exercise: Rotary positional encoding (RoPE)
+## Exercise 1: Learned absolute positional encoding
+
+Implement learned absolute positional encoding for Transformer activations.
+
+```text
+input:  (batch_size, sequence_length, d_model)
+output: (batch_size, sequence_length, d_model)
+```
+
+Requirements:
+
+- Store a learned table of shape `(max_seq_len, d_model)`.
+- Use `nn.Embedding` to look up positions `0 ... sequence_length - 1`.
+- Share the selected positional vectors across the batch through broadcasting.
+- Reject sequences longer than `max_seq_len`.
+- Preserve the input shape.
+
+### Discussion questions
+
+1. What are the shapes of the token-embedding and positional-embedding tables?
+2. How do their lookup results broadcast before addition?
+3. Why does self-attention need positional information?
+4. What happens when inference receives a sequence longer than the learned
+   table?
+5. What is the relationship between `nn.Embedding` and `nn.Parameter`?
+6. How can a controlled test verify position ordering and batch broadcasting?
+7. Why should test weights be copied inside `torch.no_grad()`?
+
+## Exercise 2: Sinusoidal positional encoding
+
+Implement deterministic sinusoidal positional encoding and add it to
+Transformer activations.
+
+```text
+input:  (batch_size, sequence_length, d_model)
+table:  (max_seq_len, d_model)
+output: (batch_size, sequence_length, d_model)
+```
+
+Requirements:
+
+- Require a positive, even `d_model`.
+- Use interleaved sine values at even feature indices and cosine values at odd
+  feature indices.
+- Use a configurable maximum sequence length and frequency base.
+- Precompute the table as a registered buffer, not a parameter.
+- Preserve the input shape and dtype.
+- Reject sequences longer than `max_seq_len`.
+
+### Discussion questions
+
+1. How does sinusoidal encoding differ from learned positional embeddings?
+2. Why are multiple frequencies used across the feature pairs?
+3. What are the sine and cosine formulas for pair index `i`?
+4. How do the angle-addition identities expose relative offsets?
+5. Why should the table be a registered buffer?
+6. What shapes should the position, frequency, and angle tensors have?
+7. What does vectorization mean in this table construction?
+8. What should the complete encoding at position zero contain?
+9. How is additive sinusoidal encoding different from RoPE?
+
+## Exercise 3: Rotary positional encoding (RoPE)
 
 Implement rotary positional encoding in PyTorch for query and key tensors.
 
@@ -45,4 +106,3 @@ Do not use an existing RoPE implementation.
 10. Which vector norms and dot products are preserved by the rotations, and
     which attention scores change?
 11. How would you test the implementation under interview time constraints?
-
