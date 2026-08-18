@@ -69,8 +69,6 @@
 - Value and gradient comparison with PyTorch
 - All-ignored targets and input-immutability tests
 
-## Next core sequence
-
 ### 9. Basic language-model training
 
 - Shifted causal language-model logits and targets
@@ -80,6 +78,8 @@
 - Training versus evaluation mode
 - Gradient accumulation and gradient clipping
 - Overfitting a tiny batch as an end-to-end correctness test
+
+## Next core sequence
 
 ### 10. KV caching
 
@@ -210,12 +210,12 @@
 ## Immediate path
 
 ```text
-basic training -> KV cache -> MQA/GQA -> byte-level BPE -> generation
--> speculative decoding -> FlashAttention
+KV cache -> MQA/GQA -> byte-level BPE -> generation -> speculative decoding
+-> FlashAttention
 ```
 
-The order is intentional: a basic training loop first proves that the decoder
-and completed stable loss can learn together; KV caching then exposes the main
+The order is intentional: the completed training loop proves that the decoder
+and stable loss can learn together; KV caching now exposes the main
 autoregressive inference memory problem; MQA and GQA reduce that cost;
 tokenization completes the input side of the model; generation combines the
 decoder, tokenizer, and cache; speculative decoding builds on generation and
