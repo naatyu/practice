@@ -85,14 +85,55 @@ def test_wrong_rope_construction():
         )
 
 
-def test_rope_integration() -> None:
+def test_cache_shapes_after_prefill() -> None:
     torch.manual_seed(0)
     x = torch.randn((2, 5, 32))
     rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
     mha = MultiHeadAttention(d_model=32, num_heads=4, rope=rope).eval()
 
-    output = mha(x, position_offset=0)
-    shifted_output = mha(x, position_offset=5)
+    output, (k_cache, v_cache) = mha(x, causal=True, use_cache=True)
 
     assert output.shape == x.shape
-    torch.testing.assert_close(output, shifted_output)
+    assert k_cache.shape == (2, 4, 5, 8)
+    assert v_cache.shape == (2, 4, 5, 8)
+
+
+def test_cache_is_appended_along_sequence_dimension() -> None:
+    torch.manual_seed(0)
+    prompt = torch.randn((2, 5, 32))
+    next_token = torch.randn((2, 1, 32))
+    rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
+    mha = MultiHeadAttention(d_model=32, num_heads=4, rope=rope).eval()
+
+    _, cache = mha(prompt, causal=True, use_cache=True)
+    output, (k_cache, v_cache) = mha(
+        next_token, kv_cache=cache, causal=True, use_cache=True
+    )
+
+    assert output.shape == (2, 1, 32)
+    assert k_cache.shape == (2, 4, 6, 8)
+    assert v_cache.shape == (2, 4, 6, 8)
+
+
+def test_cached_attention_matches_full_attention_suffix() -> None:
+    torch.manual_seed(0)
+    x = torch.randn((2, 7, 32))
+    prompt_len = 4
+    rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
+    mha = MultiHeadAttention(d_model=32, num_heads=4, rope=rope).eval()
+
+    full_output = mha(x, causal=True)
+
+    _, cache = mha(x[:, :prompt_len], causal=True, use_cache=True)
+    cached_suffix_output, updated_cache = mha(
+        x[:, prompt_len:], kv_cache=cache, causal=True, use_cache=True
+    )
+
+    torch.testing.assert_close(
+        cached_suffix_output,
+        full_output[:, prompt_len:],
+        atol=1e-6,
+        rtol=1e-5,
+    )
+    assert updated_cache[0].shape[-2] == x.shape[1]
+    assert updated_cache[1].shape[-2] == x.shape[1]

@@ -79,17 +79,18 @@
 - Gradient accumulation and gradient clipping
 - Overfitting a tiny batch as an end-to-end correctness test
 
-## Next core sequence
-
 ### 10. KV caching
 
 - Prefill versus decoding
 - Per-layer cache shapes
 - Appending new K and V tensors
-- RoPE offsets
+- RoPE offsets inferred from cache length
 - Causal masking with unequal query and key lengths
-- Full-sequence versus cached-logit equivalence
+- Full-sequence versus token-by-token cached-logit equivalence
 - Cache memory cost
+- Dynamic concatenation versus static and paged caches
+
+## Next core sequence
 
 ### 11. Multi-query and grouped-query attention
 
@@ -243,13 +244,13 @@
 ## Immediate path
 
 ```text
-KV cache -> MQA/GQA -> byte-level BPE -> generation -> speculative decoding
+MQA/GQA -> byte-level BPE -> generation -> speculative decoding
 -> FlashAttention -> FLOP and memory accounting -> YaRN
 ```
 
 The order is intentional: the completed training loop proves that the decoder
-and stable loss can learn together; KV caching now exposes the main
-autoregressive inference memory problem; MQA and GQA reduce that cost;
+and stable loss can learn together; the completed KV-cache exercise exposes
+the main autoregressive inference memory problem; MQA and GQA reduce that cost;
 tokenization completes the input side of the model; generation combines the
 decoder, tokenizer, and cache; speculative decoding builds on generation and
 cache management to accelerate sampling without changing the target

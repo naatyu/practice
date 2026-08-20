@@ -93,22 +93,62 @@ def test_num_blocks(model_args):
     assert len(model.blocks) == model_args["n_layers"]
 
 
-def test_position_offset(model_args):
-    model = DecoderModel(
-        vocab_size=model_args["vocab_size"],
-        d_model=model_args["d_model"],
-        num_heads=model_args["num_heads"],
-        max_seq_len=model_args["max_seq_len"],
-        n_layers=model_args["n_layers"],
-        hidden_dim=model_args["hidden_dim"],
-        dropout_p=model_args["dropout_p"],
-        rope_base=model_args["rope_base"],
-    )
+def test_cache_shapes_after_prefill(model_args):
+    torch.manual_seed(0)
+    batch_size = 2
+    seq_len = 5
     input_ids = torch.randint(
-        0,
-        model_args["vocab_size"],
-        (2, 3),
+        0, model_args["vocab_size"], (batch_size, seq_len)
     )
+    model = DecoderModel(**model_args).eval()
 
-    with pytest.raises(ValueError, match="offset"):
-        model(input_ids, position_offset=18)
+    logits, kv_caches = model(input_ids, use_cache=True)
+
+    assert logits.shape == (batch_size, seq_len, model_args["vocab_size"])
+    assert len(kv_caches) == model_args["n_layers"]
+    for k_cache, v_cache in kv_caches:
+        expected_shape = (
+            batch_size,
+            model_args["num_heads"],
+            seq_len,
+            model_args["d_model"] // model_args["num_heads"],
+        )
+        assert k_cache.shape == expected_shape
+        assert v_cache.shape == expected_shape
+
+
+def test_rejects_wrong_number_of_layer_caches(model_args):
+    model = DecoderModel(**model_args).eval()
+    input_ids = torch.randint(0, model_args["vocab_size"], (2, 1))
+
+    with pytest.raises(ValueError, match="number of layers"):
+        model(input_ids, kv_caches=[], use_cache=True)
+
+
+def test_token_by_token_cached_logits_match_full_forward(model_args):
+    torch.manual_seed(0)
+    input_ids = torch.randint(0, model_args["vocab_size"], (2, 8))
+    prompt_len = 4
+    model = DecoderModel(**model_args).eval()
+
+    full_logits = model(input_ids)
+
+    prompt_logits, kv_caches = model(
+        input_ids[:, :prompt_len], use_cache=True
+    )
+    cached_logits = [prompt_logits]
+
+    for position in range(prompt_len, input_ids.shape[1]):
+        next_logits, kv_caches = model(
+            input_ids[:, position : position + 1],
+            kv_caches=kv_caches,
+            use_cache=True,
+        )
+        cached_logits.append(next_logits)
+
+    cached_logits = torch.cat(cached_logits, dim=1)
+
+    torch.testing.assert_close(cached_logits, full_logits, atol=1e-5, rtol=1e-5)
+    for k_cache, v_cache in kv_caches:
+        assert k_cache.shape[-2] == input_ids.shape[1]
+        assert v_cache.shape[-2] == input_ids.shape[1]

@@ -54,8 +54,13 @@ class MultiHeadAttention(nn.Module):
         self.rope = rope
 
     def forward(
-        self, x: torch.Tensor, causal: bool = False, position_offset: int = 0
-    ) -> torch.Tensor:
+        self,
+        x: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        *,
+        causal: bool = False,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, S, d_model = x.shape
 
         qkv = self.qkv(x)  # [B,S,3d_model]
@@ -66,7 +71,14 @@ class MultiHeadAttention(nn.Module):
         v = v.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
 
         if self.rope is not None:
-            q, k = self.rope(q, k, position_offset)
+            q, k = self.rope(
+                q, k, offset=kv_cache[0].shape[-2] if kv_cache is not None else 0
+            )
+
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            k = torch.cat((past_k, k), dim=-2)
+            v = torch.cat((past_v, v), dim=-2)
 
         dropout_p = self.dropout_p if self.training else 0.0
 
@@ -74,4 +86,6 @@ class MultiHeadAttention(nn.Module):
 
         attn_out = attn_out.permute(0, 2, 1, 3).reshape(B, S, d_model)  # [B,S,d_model]
 
+        if use_cache:
+            return self.out(attn_out), (k, v)
         return self.out(attn_out)

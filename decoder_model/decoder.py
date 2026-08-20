@@ -59,17 +59,35 @@ class DecoderModel(nn.Module):
             )  # weight matrix is already transposed when stored for a linear layer
 
     def forward(
-        self, input_ids: torch.Tensor, position_offset: int = 0
-    ) -> torch.Tensor:
+        self,
+        input_ids: torch.Tensor,
+        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        *,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+        if use_cache and kv_caches is not None and len(kv_caches) != len(self.blocks):
+            raise ValueError(
+                "KV cache number of layers does not match the model number of layers."
+            )
+        updated_caches = []
         # Tokens embeddings, [B, S] -> [B, S, d_model]
         x = self.tok_emb(input_ids)
 
         # Loop through transformer blocks
-        for block in self.blocks:
-            x = block(x, position_offset)
+        for i, block in enumerate(self.blocks):
+            if use_cache and kv_caches is not None:
+                x, updated_cache = block(x, kv_caches[i], use_cache=True)
+                updated_caches.append(updated_cache)
+            elif use_cache and kv_caches is None:
+                x, updated_cache = block(x, use_cache=True)
+                updated_caches.append(updated_cache)
+            else:
+                x = block(x)
 
         # Final norm
         x = self.final_norm(x)
 
         # Output logits
+        if use_cache:
+            return self.lm_head(x), updated_caches
         return self.lm_head(x)

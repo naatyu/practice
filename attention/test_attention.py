@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -41,3 +42,28 @@ def test_causal_mask() -> None:
 
     assert actual.shape == q.shape
     torch.testing.assert_close(actual, expected)
+
+
+def test_cached_causal_attention_matches_full_attention_suffix() -> None:
+    """Suffix queries over the full K/V prefix must match a full causal pass."""
+    torch.manual_seed(0)
+    q = torch.randn(2, 3, 6, 7, dtype=torch.float64)
+    k = torch.randn(2, 3, 6, 7, dtype=torch.float64)
+    v = torch.randn(2, 3, 6, 7, dtype=torch.float64)
+
+    full_output = attention(q, k, v, causal=True)
+
+    query_len = 2
+    cached_output = attention(q[:, :, -query_len:, :], k, v, causal=True)
+
+    assert cached_output.shape == (2, 3, query_len, 7)
+    torch.testing.assert_close(cached_output, full_output[:, :, -query_len:, :])
+
+
+def test_causal_attention_rejects_query_longer_than_keys() -> None:
+    q = torch.randn(1, 2, 4, 8)
+    k = torch.randn(1, 2, 3, 8)
+    v = torch.randn(1, 2, 3, 8)
+
+    with pytest.raises(ValueError):
+        attention(q, k, v, causal=True)

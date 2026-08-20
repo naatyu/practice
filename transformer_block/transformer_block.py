@@ -23,10 +23,22 @@ class TransformerBlock(nn.Module):
         self.norm1 = RMSNorm(d_model, eps=eps)
         self.norm2 = RMSNorm(d_model, eps=eps)
 
-    def forward(self, x: torch.Tensor, position_offset: int = 0):
-        x_attn = x + self.attn(
-            self.norm1(x), causal=True, position_offset=position_offset
-        )
+    def forward(
+        self,
+        x: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        *,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if use_cache:
+            attn_output, updated_cache = self.attn(
+                self.norm1(x), causal=True, use_cache=True, kv_cache=kv_cache
+            )
+            x_attn = x + attn_output
+        else:
+            x_attn = x + self.attn(self.norm1(x), causal=True)
         x_ffn = x_attn + self.ffn(self.norm2(x_attn))
 
+        if use_cache:
+            return x_ffn, updated_cache
         return x_ffn
