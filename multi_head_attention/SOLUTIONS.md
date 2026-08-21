@@ -149,3 +149,116 @@ PyTorch's reference module also requires explicit query, key, and value inputs,
 returns output and optional attention weights as a tuple, and defaults to
 sequence-first layout unless `batch_first=True` is configured. Dropout
 comparisons should be performed in evaluation mode or with zero probability.
+
+## Grouped-query and multi-query attention
+
+Let `num_heads` denote query heads and `num_kv_heads` denote key/value heads:
+
+```text
+MHA: num_kv_heads = num_heads
+GQA: 1 < num_kv_heads < num_heads
+MQA: num_kv_heads = 1
+```
+
+Equal-sized groups require `num_heads` to be divisible by `num_kv_heads`. The
+number of queries sharing each KV head is:
+
+```text
+group_size = num_heads / num_kv_heads
+```
+
+### Projection and head shapes
+
+Queries retain the complete query-head width, while K and V use the smaller
+KV-head width:
+
+```text
+Q projection: d_model -> num_heads * d_head
+K projection: d_model -> num_kv_heads * d_head
+V projection: d_model -> num_kv_heads * d_head
+```
+
+One fused projection therefore has output width:
+
+```text
+(num_heads + 2 * num_kv_heads) * d_head
+```
+
+Because these sections are unequal under GQA, `split` receives the explicit
+sizes rather than using three equal chunks. After head separation:
+
+```text
+Q:   (B, num_heads,    query_len, d_head)
+K/V: (B, num_kv_heads, key_len,   d_head)
+```
+
+RoPE is applied to compact Q and K. New compact K/V tensors are concatenated
+with the compact cache before attention, and the returned cache must remain
+compact or the cache-memory benefit disappears.
+
+### Grouped broadcasting without repeated K/V tensors
+
+For `group_size = num_heads / num_kv_heads`, query heads are represented as:
+
+```text
+Q:   (B, num_kv_heads, group_size, query_len, d_head)
+K/V: (B, num_kv_heads, 1,          key_len,   d_head)
+```
+
+Matrix multiplication treats the final two dimensions as matrices and
+broadcasts the preceding batch dimensions. The singleton K/V group dimension
+therefore serves every query in its group without an explicit
+`repeat_interleave` allocation:
+
+```text
+Q @ K^T:
+(B, num_kv_heads, group_size, query_len, d_head)
+@
+(B, num_kv_heads, 1,          d_head,   key_len)
+->
+(B, num_kv_heads, group_size, query_len, key_len)
+```
+
+The probability-value multiplication broadcasts V in the same way. The
+result's KV-head and group dimensions are then recombined into `num_heads`.
+The causal mask shaped `(query_len, key_len)` also broadcasts across the
+leading batch, KV-head, and group dimensions.
+
+`reshape` splits the ordered query-head dimension into contiguous groups, and
+`unsqueeze` adds the singleton K/V group dimension. These operations share
+storage in this layout. Explicit `repeat_interleave` creates copied K/V
+tensors. A backend may still use internal workspace, so runtime claims require
+profiling, but grouped broadcasting avoids the explicit expanded tensors.
+
+### Parameter, compute, and cache accounting
+
+With eight query heads and two KV heads, K and V projections and the KV cache
+are each one quarter of their MHA size. The factor for storing both K and V
+appears in both designs and cancels when calculating the reduction ratio.
+
+The complete fused projection is not four times smaller because Q is
+unchanged:
+
+```text
+MHA width: (8 + 8 + 8) * d_head = 24 * d_head
+GQA width: (8 + 2 + 2) * d_head = 12 * d_head
+```
+
+Thus this fused QKV projection is half the MHA size. Q projection and output
+projection costs remain unchanged.
+
+The two attention matrix multiplications also remain approximately unchanged:
+every query head still produces scores against all key positions and a
+weighted-value output. GQA primarily reduces K/V projection work, persistent
+cache storage, and decode-time cache bandwidth. This can materially improve
+autoregressive throughput because decoding is often memory-bandwidth-bound,
+but a fourfold cache reduction does not imply fourfold end-to-end speedup.
+
+MQA maximizes these savings but forces every query head to share one K/V
+representation, which can reduce model quality. GQA keeps several independent
+KV representations and is an empirical compromise: suitable group counts can
+approach MHA quality while retaining much of MQA's memory and throughput gain.
+
+Strong tests cover MHA, GQA, and MQA; inspect fused projection and compact cache
+shapes; propagate `num_kv_heads` through every decoder layer; and compare full
+causal logits with prefill plus token-by-token cached decoding.

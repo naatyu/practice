@@ -25,3 +25,25 @@ attention. Support optional causal masking and attention dropout.
    state control it?
 9. What equivalent strategies can separate fused QKV features and expose the
    head dimension?
+
+## Exercise 2: Grouped-query and multi-query attention
+
+Extend multi-head attention with a configurable number of KV heads while
+keeping the original number of query heads. The same implementation should
+support MHA, GQA, and MQA, including RoPE and compact KV caching.
+
+### Discussion questions
+
+1. How do MHA, GQA, and MQA relate through `num_heads` and `num_kv_heads`?
+2. What divisibility constraint makes equal query groups possible?
+3. What are the fused Q, K, and V projection widths?
+4. How can unequal fused outputs be separated with `torch.split`?
+5. How are query heads mapped to shared KV heads?
+6. Why must the cache retain compact KV heads rather than expanded copies?
+7. How can broadcasting avoid materializing repeated K/V tensors?
+8. Which projection, cache, bandwidth, and attention-matrix costs decrease?
+9. Why do the dominant attention matrix multiplications remain approximately
+   unchanged?
+10. Why can GQA retain MHA-like quality more reliably than MQA?
+11. Which tests verify that the complete decoder actually uses compact GQA or
+    MQA caches?

@@ -90,16 +90,17 @@
 - Cache memory cost
 - Dynamic concatenation versus static and paged caches
 
-## Next core sequence
-
 ### 11. Multi-query and grouped-query attention
 
 - Separate query-head and KV-head counts
 - MHA, GQA, and MQA as points on one design spectrum
-- Projection parameter shapes
-- Mapping query heads to KV heads
-- KV-cache memory savings
-- Quality, throughput, and memory tradeoffs
+- Unequal fused QKV projection shapes
+- Mapping query heads to compact KV heads with grouped broadcasting
+- KV-cache and projection savings
+- Quality, throughput, compute, and memory tradeoffs
+- End-to-end cached decoder equivalence for MHA, GQA, and MQA
+
+## Next core sequence
 
 ### 12. Byte-level BPE
 
@@ -244,13 +245,14 @@
 ## Immediate path
 
 ```text
-MQA/GQA -> byte-level BPE -> generation -> speculative decoding
+byte-level BPE -> generation -> speculative decoding
 -> FlashAttention -> FLOP and memory accounting -> YaRN
 ```
 
 The order is intentional: the completed training loop proves that the decoder
 and stable loss can learn together; the completed KV-cache exercise exposes
-the main autoregressive inference memory problem; MQA and GQA reduce that cost;
+the main autoregressive inference memory problem; the completed MQA/GQA work
+reduces that cost;
 tokenization completes the input side of the model; generation combines the
 decoder, tokenizer, and cache; speculative decoding builds on generation and
 cache management to accelerate sampling without changing the target

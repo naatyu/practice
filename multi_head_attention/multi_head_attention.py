@@ -19,17 +19,29 @@ class MultiHeadAttention(nn.Module):
         self,
         d_model: int,
         num_heads: int,
+        num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope: RotaryPositionalEncoding | None = None,
     ) -> None:
         super().__init__()
+        if num_kv_heads is None:
+            num_kv_heads = num_heads
+
         # check num heads
         if num_heads <= 0:
             raise ValueError(f"Expected num_heads to be > 0 got {num_heads} instead.")
+        if num_kv_heads <= 0:
+            raise ValueError(
+                f"Expected num_kv_heads to be > 0 got {num_kv_heads} instead."
+            )
         # Check for divisibility
         if d_model % num_heads != 0:
             raise ValueError(
                 f"Expected d_model to be divisible by num_heads but got {d_model} and {num_heads} instead"
+            )
+        if num_heads % num_kv_heads != 0:
+            raise ValueError(
+                f"Expected num_heads to be divisible by num_kv_heads but got {num_heads} and {num_kv_heads} instead"
             )
         # Check dropout value
         if not (0 <= dropout_p <= 1):
@@ -39,6 +51,8 @@ class MultiHeadAttention(nn.Module):
 
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.group_size = num_heads // num_kv_heads
         self.d_head = d_model // num_heads
         self.dropout_p = dropout_p
 
@@ -48,7 +62,9 @@ class MultiHeadAttention(nn.Module):
                 f"Expected rope dimension and head dimension to match, got {rope.d_head} and {self.d_head} instead."
             )
 
-        self.qkv = nn.Linear(d_model, 3 * d_model)
+        self.qkv = nn.Linear(
+            d_model, num_heads * self.d_head + 2 * num_kv_heads * self.d_head
+        )
         self.out = nn.Linear(d_model, d_model)
 
         self.rope = rope
@@ -61,14 +77,23 @@ class MultiHeadAttention(nn.Module):
         causal: bool = False,
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
-        B, S, d_model = x.shape
+        B, query_len, d_model = x.shape
 
-        qkv = self.qkv(x)  # [B,S,3d_model]
-        q, k, v = qkv.split(self.d_model, dim=-1)  # [B,S,d_model]
-        # Prepare for attention [B,S,d_model] -> [B, S, H, d_head] -> [B, H, S, d_head]
-        q = q.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
-        k = k.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
-        v = v.reshape(B, S, self.num_heads, self.d_head).transpose(1, 2)
+        # [B, query_len, d_model + 2 * num_kv_heads * d_head]
+        qkv = self.qkv(x)
+        q, k, v = qkv.split(
+            [
+                self.d_model,
+                self.num_kv_heads * self.d_head,
+                self.num_kv_heads * self.d_head,
+            ],
+            dim=-1,
+        )  # Q: [B, query_len, d_model], K/V: [B, query_len, num_kv_heads * d_head]
+
+        # Split projected features into heads and move heads before query_len.
+        q = q.reshape(B, query_len, self.num_heads, self.d_head).transpose(1, 2)
+        k = k.reshape(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
+        v = v.reshape(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
 
         if self.rope is not None:
             q, k = self.rope(
@@ -82,9 +107,26 @@ class MultiHeadAttention(nn.Module):
 
         dropout_p = self.dropout_p if self.training else 0.0
 
-        attn_out = attention(q, k, v, dropout_p, causal=causal)  # [B,H,S,d_head]
+        # Expose query groups and broadcast each compact K/V head across its
+        # corresponding query heads without materializing repeated K/V tensors.
+        # q: [B, num_heads, query_len, d_head]
+        # k, v: [B, num_kv_heads, key_len, d_head]
+        grouped_q = q.reshape(
+            B, self.num_kv_heads, self.group_size, query_len, self.d_head
+        )  # [B, num_kv_heads, group_size, query_len, d_head]
+        grouped_k = k.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
+        grouped_v = v.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
 
-        attn_out = attn_out.permute(0, 2, 1, 3).reshape(B, S, d_model)  # [B,S,d_model]
+        attn_out = attention(
+            grouped_q, grouped_k, grouped_v, dropout_p, causal=causal
+        )  # [B, num_kv_heads, group_size, query_len, d_head]
+        attn_out = attn_out.reshape(
+            B, self.num_heads, query_len, self.d_head
+        )  # [B, num_heads, query_len, d_head]
+
+        attn_out = attn_out.permute(0, 2, 1, 3).reshape(
+            B, query_len, d_model
+        )  # [B, query_len, d_model]
 
         if use_cache:
             return self.out(attn_out), (k, v)

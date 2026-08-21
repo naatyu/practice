@@ -13,12 +13,20 @@ class TransformerBlock(nn.Module):
         d_model: int,
         num_heads: int,
         hidden_dim: int,
+        num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope: RotaryPositionalEncoding | None = None,
         eps: float = 1e-6,
     ):
         super().__init__()
-        self.attn = MultiHeadAttention(d_model, num_heads, dropout_p, rope)
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+        self.attn = MultiHeadAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            dropout_p=dropout_p,
+            rope=rope,
+        )
         self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)
         self.norm1 = RMSNorm(d_model, eps=eps)
         self.norm2 = RMSNorm(d_model, eps=eps)

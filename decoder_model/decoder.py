@@ -15,6 +15,7 @@ class DecoderModel(nn.Module):
         max_seq_len: int,
         n_layers: int,
         hidden_dim: int,
+        num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope_base: float = 10_000,
         *,
@@ -26,6 +27,7 @@ class DecoderModel(nn.Module):
         self.vocab_size = vocab_size
         self.d_model = d_model
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
         self.max_seq_len = max_seq_len
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
@@ -43,6 +45,7 @@ class DecoderModel(nn.Module):
                 TransformerBlock(
                     d_model=self.d_model,
                     num_heads=self.num_heads,
+                    num_kv_heads=self.num_kv_heads,
                     hidden_dim=self.hidden_dim,
                     dropout_p=self.dropout_p,
                     rope=self.rope,

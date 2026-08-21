@@ -15,6 +15,12 @@ def test_construction() -> None:
     with pytest.raises(ValueError, match="dropout"):
         MultiHeadAttention(d_model=768, num_heads=12, dropout_p=-1)
 
+    with pytest.raises(ValueError, match="num_kv_heads"):
+        MultiHeadAttention(d_model=64, num_heads=8, num_kv_heads=0)
+
+    with pytest.raises(ValueError, match="divisible by num_kv_heads"):
+        MultiHeadAttention(d_model=64, num_heads=8, num_kv_heads=3)
+
 
 def test_output_shape() -> None:
     torch.manual_seed(0)
@@ -137,3 +143,57 @@ def test_cached_attention_matches_full_attention_suffix() -> None:
     )
     assert updated_cache[0].shape[-2] == x.shape[1]
     assert updated_cache[1].shape[-2] == x.shape[1]
+
+
+@pytest.mark.parametrize("num_kv_heads", [2, 1])
+def test_gqa_and_mqa_output_and_projection_shapes(num_kv_heads: int) -> None:
+    torch.manual_seed(0)
+    d_model = 32
+    num_heads = 4
+    d_head = d_model // num_heads
+    x = torch.randn((2, 5, d_model))
+    mha = MultiHeadAttention(
+        d_model=d_model,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+    ).eval()
+
+    output = mha(x)
+
+    assert output.shape == x.shape
+    assert mha.qkv.out_features == (
+        num_heads + 2 * num_kv_heads
+    ) * d_head
+
+
+@pytest.mark.parametrize("num_kv_heads", [2, 1])
+def test_gqa_and_mqa_cache_stays_compact_and_matches_full_forward(
+    num_kv_heads: int,
+) -> None:
+    torch.manual_seed(0)
+    x = torch.randn((2, 7, 32))
+    prompt_len = 4
+    rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
+    mha = MultiHeadAttention(
+        d_model=32,
+        num_heads=4,
+        num_kv_heads=num_kv_heads,
+        rope=rope,
+    ).eval()
+
+    full_output = mha(x, causal=True)
+
+    _, cache = mha(x[:, :prompt_len], causal=True, use_cache=True)
+    cached_suffix_output, updated_cache = mha(
+        x[:, prompt_len:], kv_cache=cache, causal=True, use_cache=True
+    )
+
+    torch.testing.assert_close(
+        cached_suffix_output,
+        full_output[:, prompt_len:],
+        atol=1e-6,
+        rtol=1e-5,
+    )
+    expected_cache_shape = (2, num_kv_heads, x.shape[1], 8)
+    assert updated_cache[0].shape == expected_cache_shape
+    assert updated_cache[1].shape == expected_cache_shape

@@ -13,8 +13,11 @@ def attention(
 ) -> torch.Tensor:
     """Implement bidirectional scaled dot-product attention.
 
-    q, k, v:
+    Typical q, k, v shapes:
         (batch_size, num_heads, sequence_length, head_dim)
+
+    Additional broadcast-compatible leading dimensions are supported. GQA
+    uses this to represent query groups without repeating K and V.
 
     Do not use torch.nn.functional.scaled_dot_product_attention.
     """
