@@ -102,15 +102,17 @@
 
 ## Next core sequence
 
-### 12. Byte-level BPE
+### 12. Byte-level BPE (in progress)
 
 - Bytes versus Unicode characters
 - Initial byte vocabulary
+- Unicode-aware regex pre-tokenization and merge boundaries
 - Pair-frequency counting
 - Deterministic merge training
 - Encoding and decoding
 - Merge ordering
 - Special tokens
+- Portable JSON save/load
 - Round-trip tests
 - Efficient implementation strategies
 

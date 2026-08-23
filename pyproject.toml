@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "regex>=2026.7.19",
     "torch>=2.13.0",
 ]
 
