@@ -234,7 +234,29 @@
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 24. Extended training and evaluation
+### 24. Reinforcement-learning post-training
+
+- RLHF pipeline: policy, reference policy, reward model, and generated samples
+- Token-level log-probabilities for sampled completions
+- Sequence rewards, completion masks, and credit assignment
+- KL regularization against the reference policy
+- Proximal Policy Optimization (PPO)
+- Importance-sampling probability ratios
+- Advantage estimation and Generalized Advantage Estimation (GAE)
+- Clipped policy surrogate objective
+- Value-function loss and entropy bonus
+- PPO minibatches and multiple optimization epochs per rollout
+- Group Relative Policy Optimization (GRPO)
+- Sampling multiple completions for each prompt
+- Group-relative reward normalization and advantage construction
+- Removing the learned value model used by PPO
+- GRPO clipped objective and reference-policy KL penalty
+- Reward scaling, zero-variance groups, and numerical stability
+- Separating rollout generation from policy optimization
+- Tests for log-probability ratios, clipping, masked losses, advantages, and KL
+- PPO versus GRPO memory, compute, stability, and reward-model tradeoffs
+
+### 25. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
