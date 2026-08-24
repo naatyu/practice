@@ -45,10 +45,17 @@ code.
 - Weight tying and shifted next-token loss
 - Stable cross-entropy with ignored targets
 - Basic training steps, AdamW, clipping, and gradient accumulation
+- KV caching across prefill and autoregressive decoding
+- Cached versus full-sequence decoder equivalence
+- Multi-query attention (MQA) and grouped-query attention (GQA)
+- Compact KV caches with separate query-head and KV-head counts
+- Byte-level BPE training, encoding, and UTF-8 decoding
+- Unicode-aware regex pre-tokenization and protected special tokens
+- Portable tokenizer serialization and reconstruction
 
-The repository is still growing. KV caching, GQA/MQA, byte-level BPE,
-generation, speculative decoding, FlashAttention, and performance accounting
-are among the next major exercises. The full ordered plan is in
+The repository is still growing. Generation is next, followed by speculative
+decoding, FlashAttention, FLOP and memory accounting, long-context techniques,
+and larger training and inference systems topics. The full ordered plan is in
 [ROADMAP.md](ROADMAP.md).
 
 ## Running the exercises
@@ -67,6 +74,7 @@ Run one topic while working on it:
 uv run pytest -q attention
 uv run pytest -q positional_encoding
 uv run pytest -q training
+uv run pytest -q bpe
 ```
 
 The implementations often avoid PyTorch's high-level equivalent on purpose.
