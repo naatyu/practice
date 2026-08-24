@@ -98,15 +98,18 @@ If every pair used one frequency, the features would be redundant and many
 positions separated by a full period would alias.
 
 The angle-addition identities imply that, for a fixed offset `k`, the
-sine/cosine pair at `p + k` is a linear transformation of the pair at `p`:
+sine/cosine pair at `p + k` is a linear transformation of the pair at `p`.
+With the pair ordered as `[sin, cos]` and the standard rotation matrix used in
+the RoPE discussion below:
 
 ```text
-PE_pair(p + k) = R(k) PE_pair(p)
+PE_pair(p + k) = R(-k) PE_pair(p)
 ```
 
-The transformation depends only on the relative offset, which makes relative
-relationships accessible even though the vectors are added as absolute
-encodings.
+If the pair were instead ordered as `[cos, sin]`, the corresponding identity
+would use `R(k)`. In either convention, the transformation depends only on the
+relative offset, which makes relative relationships accessible even though the
+vectors are added as absolute encodings.
 
 ### Shapes, vectorization, and buffers
 
