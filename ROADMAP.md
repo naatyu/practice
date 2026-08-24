@@ -102,7 +102,7 @@
 
 ## Next core sequence
 
-### 12. Byte-level BPE (in progress)
+### 12. Byte-level BPE (completed)
 
 - Bytes versus Unicode characters
 - Initial byte vocabulary

@@ -1,23 +1,48 @@
-from collections import Counter, defaultdict
+import json
+from collections import Counter
 from collections.abc import Iterable
 from itertools import pairwise
+from pathlib import Path
 
 import regex
 
 
 class ByteLevelBPE:
-    def __init__(self, pattern: str, vocab_size: int) -> None:
+    def __init__(
+        self, pattern: str, vocab_size: int, special_tokens: list[str] | None = None
+    ) -> None:
         if vocab_size < 256:
             raise ValueError(
-                f"Expected vocab_size to be more than 256, got: {vocab_size}"
+                f"Expected vocab_size to be at least 256, got: {vocab_size}"
             )
+
+        special_tokens = special_tokens or []
+        if any(token == "" for token in special_tokens):
+            raise ValueError("Special tokens must not be empty.")
+        if len(special_tokens) != len(set(special_tokens)):
+            raise ValueError("Special tokens must be unique.")
 
         self.pattern = pattern
         self._pattern = regex.compile(pattern)
         self.vocab_size = vocab_size
         self.vocab = {i: bytes([i]) for i in range(256)}
+        self.special_tokens = {v: vocab_size + i for i, v in enumerate(special_tokens)}
+        self.special_token_ids = {
+            token_id: token for token, token_id in self.special_tokens.items()
+        }
         self.merges = []
         self.merge_ranks = {}
+
+        sorted_special_tokens = sorted(
+            special_tokens, reverse=True, key=len
+        )  # Handle possible special token overlapping by starting with longest match
+        if sorted_special_tokens:
+            special_pattern = "|".join(
+                regex.escape(sp_t) for sp_t in sorted_special_tokens
+            )
+            self._special_pattern = regex.compile(f"({special_pattern})")
+        else:
+            self._special_pattern = None
 
     def _pretokenize(self, text: str) -> list[list[int]]:
         if not text:
@@ -40,15 +65,25 @@ class ByteLevelBPE:
 
         return token_ids
 
-    @staticmethod
-    def count_pairs(token_ids: list[int]) -> dict[tuple[int, int], int]:
-        freq_counter = defaultdict(int)
-        for i in range(len(token_ids) - 1):
-            a = token_ids[i]
-            b = token_ids[i + 1]
-            freq_counter[(a, b)] += 1
+    def _split_special_tokens(self, text: str) -> list[str]:
+        if not text:
+            return []
 
-        return freq_counter
+        if self._special_pattern is None:
+            return [text]
+
+        return [part for part in self._special_pattern.split(text) if part]
+
+    def _text_to_chunks(self, text: str) -> list[list[int]]:
+        chunks = []
+
+        for part in self._split_special_tokens(text):
+            if part in self.special_tokens:
+                chunks.append([self.special_tokens[part]])
+            else:
+                chunks.extend(self._pretokenize(part))
+
+        return chunks
 
     @staticmethod
     def merge_pair(
@@ -70,13 +105,16 @@ class ByteLevelBPE:
         return merged
 
     def train(self, text: str | Iterable[str]) -> None:
+        if self.merges:
+            raise RuntimeError("Tokenizer has already been trained.")
+
         if isinstance(text, str):
             text = [text]
 
         # Pre-tokenize
         chunks = []
         for t in text:
-            chunks.extend(self._pretokenize(t))
+            chunks.extend(self._text_to_chunks(t))
 
         next_token_id = len(self.vocab)
 
@@ -85,6 +123,7 @@ class ByteLevelBPE:
             freq_count = Counter()
             for chunk in chunks:
                 freq_count.update(pairwise(chunk))
+
             # Stop training if empty, single byte or fully merged
             if not freq_count:
                 break
@@ -108,3 +147,77 @@ class ByteLevelBPE:
                 self.merge_pair(chunk, highest_key, next_token_id) for chunk in chunks
             ]
             next_token_id += 1
+
+    def encode(self, text: str) -> list[int]:
+        # Pre-tokenization
+        chunks = self._text_to_chunks(text)
+
+        while True:
+            eligible_pairs = {
+                pair for c in chunks for pair in pairwise(c) if pair in self.merge_ranks
+            }
+
+            # Stop if nothing to merge
+            if not eligible_pairs:
+                break
+
+            pair_to_merge = min(eligible_pairs, key=lambda pair: self.merge_ranks[pair])
+            rank = self.merge_ranks[pair_to_merge]
+            new_token_id = self.merges[rank][2]
+
+            chunks = [
+                self.merge_pair(chunk, pair_to_merge, new_token_id) for chunk in chunks
+            ]
+
+        return [token_id for chunk in chunks for token_id in chunk]
+
+    def decode(self, token_ids: list[int]) -> str:
+        text_bytes = []
+        for token_id in token_ids:
+            if token_id in self.special_token_ids:
+                text_bytes.append(self.special_token_ids[token_id].encode("utf-8"))
+            elif token_id in self.vocab:
+                text_bytes.append(self.vocab[token_id])
+            else:
+                raise ValueError(
+                    f"Token id {token_id} not found in vocabulary or special tokens."
+                )
+
+        return b"".join(text_bytes).decode("utf-8")
+
+    def save(self, path: Path) -> None:
+        state = {
+            "pattern": self.pattern,
+            "vocab_size": self.vocab_size,
+            "special_tokens": list(self.special_tokens),
+            "merges": self.merges,
+        }
+
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(
+                state, f, ensure_ascii=False, indent=2
+            )  # Do not ensure ascii to keep unicode special tokens readable
+
+    @classmethod
+    def load(cls, path: Path) -> "ByteLevelBPE":
+        with path.open("r", encoding="utf-8") as f:
+            saved_state = json.load(f)
+
+        tokenizer = cls(
+            pattern=saved_state["pattern"],
+            vocab_size=saved_state["vocab_size"],
+            special_tokens=saved_state["special_tokens"],
+        )
+
+        # Reconstruct
+        for rank, (left, right, next_id) in enumerate(saved_state["merges"]):
+            if left not in tokenizer.vocab:
+                raise ValueError(f"Unrecognized token id: {left}")
+            elif right not in tokenizer.vocab:
+                raise ValueError(f"Unrecognized token id: {right}")
+
+            tokenizer.merges.append((left, right, next_id))
+            tokenizer.merge_ranks[(left, right)] = rank
+            tokenizer.vocab[next_id] = tokenizer.vocab[left] + tokenizer.vocab[right]
+
+        return tokenizer

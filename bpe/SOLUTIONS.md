@@ -1,4 +1,4 @@
-# Byte-level BPE interview practice: completed reasoning
+# Byte-level BPE: completed reasoning
 
 ## Byte vocabulary and UTF-8
 
@@ -119,6 +119,72 @@ reconstruction. Keeping the dictionary is analogous to building an index over
 that canonical list. On load, validate the ordered merges and rebuild the
 dictionary rather than serializing two sources of truth.
 
+## Encoding and decoding
+
+Encoding starts from the same independent regex chunks used during training.
+It repeatedly finds adjacent pairs present in `merge_ranks`, selects the pair
+with the smallest learned rank, and replaces every non-overlapping occurrence
+inside each chunk. It never recounts frequencies on the input: merge priority
+is part of the trained tokenizer state. Once no learned pair remains, the
+chunks are flattened into one token-ID sequence.
+
+Decoding performs the inverse vocabulary lookup for every ID, joins all byte
+fragments, and decodes UTF-8 once at the end. This last detail is necessary
+because one Unicode character can be divided across several byte tokens. For
+example, the two bytes of `é` are not independently valid UTF-8 even though
+their concatenation is.
+
+Unicode therefore appears at the boundaries of this byte-level algorithm:
+the regex operates on a Unicode string, ordinary chunks are encoded to UTF-8
+before BPE, and the reconstructed bytes are decoded back to Unicode afterward.
+No normalization is performed, so canonically equivalent Unicode strings can
+have different byte sequences and tokenizations.
+
+## Special tokens
+
+Configured special strings are recognized before ordinary regex
+pre-tokenization. Each is assigned one ID at or above `vocab_size`, outside the
+regular vocabulary range. Splitting retains both the special matches and the
+ordinary text between them. Regex metacharacters in special strings are
+escaped, and alternatives are ordered longest-first so overlapping tokens use
+a deterministic longest-match rule.
+
+Ordinary pieces are pre-tokenized normally, while a special token becomes its
+own singleton chunk:
+
+```text
+"hello<|end|>world"
+-> [[bytes for hello], [special_id], [bytes for world]]
+```
+
+`pairwise` produces no pair for a singleton chunk, so training cannot learn a
+merge involving the special ID or either neighbor. Encoding likewise cannot
+merge across those boundaries. During decoding, the special string is encoded
+to UTF-8 bytes and joined with ordinary vocabulary bytes before the final
+decode.
+
+## Serialization and training lifecycle
+
+The portable JSON state contains only the original regex pattern, target
+regular vocabulary size, ordered special-token strings, and ordered merges.
+The 256-byte base vocabulary is deterministic. The learned vocabulary is
+reconstructed by replaying merges, merge ranks are their list indices, special
+IDs are regenerated from their order, and compiled regex objects are rebuilt
+from their source strings.
+
+An ordered list is a natural JSON representation because JSON object keys
+cannot be tuples. It also preserves rank and contains the input IDs and output
+ID needed to reconstruct each learned vocabulary entry. Loading validates that
+both inputs to a merge already exist, preventing references to unknown or
+future tokens.
+
+Training is intentionally one-shot once at least one merge has been learned.
+Starting a later corpus from raw bytes without first replaying existing rules
+could learn a duplicate pair under a new ID and overwrite its rank. Supporting
+true continuation would require applying all existing merges to the new corpus
+before counting additional pairs. The simpler implementation rejects that
+unsafe operation; a retry remains safe when an earlier corpus learned nothing.
+
 ## Current performance characteristics
 
 Pair counting and one pair-replacement pass are linear in the current number
@@ -143,13 +209,4 @@ Potential improvements, to evaluate after completing correctness, include:
 
 These optimizations add substantial bookkeeping, so they should be justified
 with corpus-scale profiling rather than assumed to be faster for small inputs.
-
-## Resume point: encoding
-
-For each pre-tokenized chunk, encoding should repeatedly inspect adjacent
-pairs, retain only those found in `merge_ranks`, select the smallest rank,
-replace all non-overlapping occurrences with `merges[rank][2]`, and stop when
-no learned pair remains. The encoded chunks are then flattened into one token
-list. Frequencies in the new input do not determine merge order; encoding must
-reproduce the priorities learned during training.
 

@@ -1,7 +1,8 @@
-# Byte-level BPE interview practice
+# Byte-level BPE
 
-This file contains the exercise prompt and interview questions only. Completed
-reasoning is kept separately in `SOLUTIONS.md`; implementation code remains in
+This exercise builds a byte-level BPE tokenizer from first principles. The
+questions are useful both as an implementation guide and as interview review.
+Completed reasoning is kept in `SOLUTIONS.md`; implementation code remains in
 `bpe.py`.
 
 ## Exercise
@@ -43,25 +44,30 @@ The tokenizer should eventually support:
 14. What are the time and memory costs of the baseline training algorithm?
 15. How could repeated chunks, incremental counts, linked token structures, or
     heaps improve training and encoding performance?
+16. Where does Unicode enter a tokenizer whose BPE algorithm operates on bytes?
+17. Why must byte fragments be joined before UTF-8 decoding?
+18. Why must special tokens be recognized before ordinary pre-tokenization?
+19. How do singleton chunks prevent merges across special-token boundaries?
+20. Why should overlapping special tokens use a longest-match rule?
+21. Which tokenizer fields are canonical serialized state, and which can be
+    reconstructed?
+22. Why is an ordered merge list a better JSON representation than a mapping
+    with tuple keys?
+23. Why is retraining unsafe unless existing merges are first replayed?
 
-## Current checkpoint
-
-Completed:
+## Completed scope
 
 - Constructor and base vocabulary.
 - Regex compilation and lossless pre-tokenization.
-- Pair counting.
+- Pair-frequency counting.
 - Non-overlapping pair replacement.
 - Multi-document BPE training.
 - Deterministic lexicographic tie-breaking.
 - Ordered merges, merge ranks, and merged-byte vocabulary construction.
-- Correctness tests for all of the above.
+- Rank-ordered encoding and UTF-8 decoding.
+- Indivisible special tokens with longest-match recognition.
+- Portable JSON save/load with derived-state reconstruction.
+- A one-shot training contract that prevents merge-state corruption.
+- Round-trip, boundary, Unicode, serialization, and malformed-state tests.
 
-Resume with:
-
-1. Implement `encode(text) -> list[int]` using learned merge ranks.
-2. Implement `decode(token_ids) -> str`.
-3. Add special-token handling.
-4. Add JSON save/load and validation.
-5. Profile and improve the baseline algorithm where complexity is justified.
-
+Performance optimization remains optional and should be guided by profiling.
