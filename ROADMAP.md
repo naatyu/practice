@@ -151,7 +151,27 @@
 - Causal block handling
 - Comparison with ordinary attention
 
-### 16. FLOP, parameter, and memory accounting
+### 16. Local and sliding-window attention
+
+- Dense attention versus sparse attention patterns
+- Causal sliding windows: each query attends only to recent tokens
+- Window-size semantics and off-by-one boundaries
+- Building a correct local causal mask
+- Attention-score shapes with full tensors versus compact windowed computation
+- Time complexity from `O(S²)` to `O(SW)` for window size `W`
+- Attention-matrix memory from `O(S²)` to `O(SW)` when implemented sparsely
+- Why applying a dense local mask alone does not realize those savings
+- Chunked and banded implementations that avoid the full score matrix
+- Receptive-field growth across multiple Transformer layers
+- Dilated, block-local, and alternating local/global attention patterns
+- Global tokens and attention sinks
+- Sliding-window KV-cache eviction during autoregressive decoding
+- Absolute RoPE positions after old cache entries are evicted
+- Quality and long-range dependency tradeoffs
+- Controlled tests for window boundaries, causality, and dense-reference parity
+- Cached decoding equivalence with a bounded local KV cache
+
+### 17. FLOP, parameter, and memory accounting
 
 - Treat performance accounting as a recurring part of every layer exercise
 - FLOPs for linear projections, including multiply-add conventions
@@ -171,7 +191,7 @@
   different runtimes
 - Comparing hand calculations with profiler-reported operator FLOPs
 
-### 17. Long-context RoPE scaling and YaRN
+### 18. Long-context RoPE scaling and YaRN
 
 - Why base RoPE can degrade beyond its training context length
 - Position interpolation and RoPE frequency scaling
@@ -186,7 +206,7 @@
 
 ## Systems and scaling
 
-### 18. Mixed precision and numerical stability
+### 19. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
 - Loss scaling
@@ -194,7 +214,7 @@
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
-### 19. Quantization
+### 20. Quantization
 
 - Weight-only versus weight-and-activation quantization
 - Per-tensor, per-channel, and group-wise scales
@@ -202,7 +222,7 @@
 - GPTQ and AWQ concepts
 - KV-cache quantization
 
-### 20. Distributed training
+### 21. Distributed training
 
 - Data parallelism
 - Tensor parallelism
@@ -211,7 +231,7 @@
 - ZeRO and FSDP
 - Computation and communication costs
 
-### 21. Efficient inference
+### 22. Efficient inference
 
 - Continuous batching
 - Paged KV caches
@@ -220,21 +240,21 @@
 
 ## Advanced architectures and adaptation
 
-### 22. Mixture of Experts
+### 23. Mixture of Experts
 
 - Top-k routing
 - Expert capacity
 - Load-balancing losses
 - Expert parallelism
 
-### 23. Fine-tuning
+### 24. Fine-tuning
 
 - LoRA
 - QLoRA
 - Supervised fine-tuning
 - Preference optimization fundamentals
 
-### 24. Reinforcement-learning post-training
+### 25. Reinforcement-learning post-training
 
 - RLHF pipeline: policy, reference policy, reward model, and generated samples
 - Token-level log-probabilities for sampled completions
@@ -256,7 +276,7 @@
 - Tests for log-probability ratios, clipping, masked losses, advantages, and KL
 - PPO versus GRPO memory, compute, stability, and reward-model tradeoffs
 
-### 25. Extended training and evaluation
+### 26. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
 - Padding and document-boundary masks
@@ -270,7 +290,7 @@
 
 ```text
 byte-level BPE -> generation -> speculative decoding
--> FlashAttention -> FLOP and memory accounting -> YaRN
+-> FlashAttention -> local attention -> FLOP and memory accounting -> YaRN
 ```
 
 The order is intentional: the completed training loop proves that the decoder
@@ -281,8 +301,9 @@ tokenization completes the input side of the model; generation combines the
 decoder, tokenizer, and cache; speculative decoding builds on generation and
 cache management to accelerate sampling without changing the target
 distribution; and FlashAttention deepens the analysis of attention performance
-during training and prefill. FLOP and memory accounting then consolidates the
-implemented components into quantitative model, training, prefill, and decode
-cost estimates.
+during training and prefill. Local attention then changes the attention pattern
+itself, connecting long-context modeling with bounded computation and cache
+memory. FLOP and memory accounting consolidates the implemented components into
+quantitative model, training, prefill, and decode cost estimates.
 YaRN then extends the completed RoPE work into long-context scaling and
 evaluation.
