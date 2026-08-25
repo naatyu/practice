@@ -307,6 +307,34 @@ Using non-persistent buffers is reasonable because the tables can be
 reconstructed deterministically from the constructor configuration and need
 not increase checkpoint size.
 
+### Complex-number implementation
+
+An adjacent pair `[x0, x1]` can be viewed as the complex number `x0 + i*x1`.
+Multiplication by `cos(theta) + i*sin(theta)` produces:
+
+```text
+(x0 + i*x1)(cos(theta) + i*sin(theta))
+= (x0*cos(theta) - x1*sin(theta))
+  + i*(x0*sin(theta) + x1*cos(theta))
+```
+
+These are exactly the real-valued RoPE equations. The complex version is a
+compact alternative formulation, but it should not be assumed faster without
+profiling: a complex value still stores both real and imaginary components,
+and complex-kernel support varies by dtype and device.
+
+`torch.view_as_complex` does not accept `bfloat16`, so half-precision pairs are
+temporarily converted to `float32` for the complex multiplication and cast
+back afterward. A complex buffer also cannot safely follow an entire module to
+a real dtype such as BF16: PyTorch would discard its imaginary component. The
+implementation therefore registers the `[..., 2]` real view of the complex
+frequencies and recreates the complex view inside the operation. This retains
+both cosine and sine components during whole-model dtype conversion.
+
+The selected complex-frequency slice has shape `[S, D/2]` after conversion and
+is broadcast as `[1, 1, S, D/2]` across batch and head dimensions. As in the
+real-valued implementation, the slice must begin at the supplied cache offset.
+
 ### Sequence offsets and the KV cache
 
 Without an offset, a one-token decoding call has `seq_len = 1` and selecting
@@ -346,6 +374,10 @@ The implementation is covered by focused tests suitable for an interview:
 7. A controlled case checks position-zero identity, both signs in the rotation
    equations, multiple frequencies, broadcasting across batches and heads,
    and rotation of both Q and K.
+8. The complex implementation matches the real-valued reference at zero and
+   nonzero offsets.
+9. FP16 and BF16 inputs preserve their dtype, including after the entire RoPE
+   module is converted to that dtype.
 
 The controlled test uses nonzero Q and K inputs. This distinguishes rotation
 from either returning the input unchanged or incorrectly treating RoPE as an

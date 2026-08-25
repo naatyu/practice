@@ -3,7 +3,10 @@ import math
 import pytest
 import torch
 
-from positional_encoding import RotaryPositionalEncoding
+from positional_encoding import (
+    RotaryPositionalEncoding,
+    RotaryPositionalEncodingComplex,
+)
 
 
 def test_output_shape():
@@ -108,3 +111,41 @@ def test_controlled_output():
     rot_q, rot_k = rope(q, k)
     torch.testing.assert_close(rot_q, q_expected)
     torch.testing.assert_close(rot_k, 2 * q_expected)
+
+
+@pytest.mark.parametrize("offset", [0, 3])
+def test_complex_rope_matches_real_implementation(offset: int) -> None:
+    torch.manual_seed(0)
+    q = torch.randn(2, 3, 4, 8)
+    k = torch.randn(2, 2, 4, 8)
+    real_rope = RotaryPositionalEncoding(d_head=8, max_seq_len=12)
+    complex_rope = RotaryPositionalEncodingComplex(d_head=8, max_seq_len=12)
+
+    expected_q, expected_k = real_rope(q, k, offset=offset)
+    actual_q, actual_k = complex_rope(q, k, offset=offset)
+
+    torch.testing.assert_close(actual_q, expected_q)
+    torch.testing.assert_close(actual_k, expected_k)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_complex_rope_preserves_low_precision_dtype(dtype: torch.dtype) -> None:
+    q = torch.randn(2, 3, 4, 8, dtype=dtype)
+    k = torch.randn(2, 2, 4, 8, dtype=dtype)
+    real_rope = RotaryPositionalEncoding(d_head=8, max_seq_len=8).to(dtype=dtype)
+    rope = RotaryPositionalEncodingComplex(d_head=8, max_seq_len=8).to(dtype=dtype)
+
+    rotated_q, rotated_k = rope(q, k, offset=2)
+    expected_q, expected_k = real_rope(q, k, offset=2)
+
+    assert rotated_q.dtype == dtype
+    assert rotated_k.dtype == dtype
+    assert rotated_q.shape == q.shape
+    assert rotated_k.shape == k.shape
+    tolerance = 4 * torch.finfo(dtype).eps
+    torch.testing.assert_close(
+        rotated_q, expected_q, rtol=tolerance, atol=tolerance
+    )
+    torch.testing.assert_close(
+        rotated_k, expected_k, rtol=tolerance, atol=tolerance
+    )

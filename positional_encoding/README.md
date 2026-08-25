@@ -106,3 +106,5 @@ Do not use an existing RoPE implementation.
 10. Which vector norms and dot products are preserved by the rotations, and
     which attention scores change?
 11. How would you test the implementation under interview time constraints?
+12. How does complex multiplication express the same pairwise rotation, and
+    what dtype and buffer pitfalls does a complex implementation introduce?
