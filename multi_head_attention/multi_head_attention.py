@@ -91,9 +91,9 @@ class MultiHeadAttention(nn.Module):
         )  # Q: [B, query_len, d_model], K/V: [B, query_len, num_kv_heads * d_head]
 
         # Split projected features into heads and move heads before query_len.
-        q = q.reshape(B, query_len, self.num_heads, self.d_head).transpose(1, 2)
-        k = k.reshape(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
-        v = v.reshape(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
+        q = q.view(B, query_len, self.num_heads, self.d_head).transpose(1, 2)
+        k = k.view(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
+        v = v.view(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
 
         if self.rope is not None:
             q, k = self.rope(
@@ -111,21 +111,21 @@ class MultiHeadAttention(nn.Module):
         # corresponding query heads without materializing repeated K/V tensors.
         # q: [B, num_heads, query_len, d_head]
         # k, v: [B, num_kv_heads, key_len, d_head]
-        grouped_q = q.reshape(
+        grouped_q = q.view(
             B, self.num_kv_heads, self.group_size, query_len, self.d_head
-        )  # [B, num_kv_heads, group_size, query_len, d_head]
+        )  # [B, num_kv_heads, group_size, query_len, d_head],
         grouped_k = k.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
         grouped_v = v.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
 
         attn_out = attention(
             grouped_q, grouped_k, grouped_v, dropout_p, causal=causal
         )  # [B, num_kv_heads, group_size, query_len, d_head]
-        attn_out = attn_out.reshape(
+        attn_out = attn_out.view(
             B, self.num_heads, query_len, self.d_head
         )  # [B, num_heads, query_len, d_head]
 
-        attn_out = attn_out.permute(0, 2, 1, 3).reshape(
-            B, query_len, d_model
+        attn_out = (
+            attn_out.transpose(1, 2).contiguous().view(B, query_len, d_model)
         )  # [B, query_len, d_model]
 
         if use_cache:
