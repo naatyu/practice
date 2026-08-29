@@ -1,8 +1,33 @@
 import torch
 from torch import nn
 
-from positional_encoding import RotaryPositionalEncodingComplex
 from rms_norm import RMSNorm
+
+
+def precompute_freqs_cis(seq_len: int, base: int, head_dim: int) -> torch.Tensor:
+    dim_positions = torch.arange(0, head_dim, 2)  # [head_dim / 2]
+    token_positions = torch.arange(0, seq_len)  # [seq_len]
+    freqs = 1 / (base ** (dim_positions / head_dim))  # [head_dim / 2]
+
+    freqs = torch.outer(token_positions, freqs)  # [seq_len, head_dim / 2]
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # [seq_len, head_dim / 2]
+
+    return freqs_cis
+
+
+def apply_rope(x: torch.Tensor, freq_cis: torch.Tensor):
+    # This version for MLA expect [B, S, H, D] as input
+    dtype = x.dtype
+
+    x = x.float()  # Because for complex operations we need FP32
+    x = x.view(*x.shape[:-1], -1, 2)  # [B, S, H, D/2, 2]
+    x = torch.view_as_complex(x)  # [B, S, H, D/2]
+    freq_cis = freq_cis.unsqueeze(0).unsqueeze(2)  # [1, S, 1, D / 2]
+    rot_x = x * freq_cis  # [B, S, H, D/2]
+    rot_x = torch.view_as_real(rot_x)  # [B, S, H, D/2, 2]
+    rot_x = rot_x.flatten(3)
+
+    return rot_x.to(dtype)
 
 
 class MultiHeadLatentAttention(nn.Module):
@@ -15,7 +40,6 @@ class MultiHeadLatentAttention(nn.Module):
         qk_nope_head_dim: int,
         qk_rope_head_dim: int,
         v_head_dim: int,
-        rope: RotaryPositionalEncodingComplex,
     ) -> None:
         super().__init__()
 
@@ -27,7 +51,6 @@ class MultiHeadLatentAttention(nn.Module):
         self.qk_rope_head_dim = qk_rope_head_dim
         self.v_head_dim = v_head_dim
         self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
-        self.rope = rope
 
         # Using lora for Q only help for activation memory but has no effect on kv-cache
         if self.q_lora_rank == 0:
@@ -52,7 +75,7 @@ class MultiHeadLatentAttention(nn.Module):
         self.kv_norm = RMSNorm(self.kv_lora_rank)
         self.out = nn.Linear(self.n_heads * self.v_head_dim, self.d_model, bias=False)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor):
         # B = batch_size, S = sequence_length, D = model dimension, d = head dimension, H = number of heads
         batch_size, seq_len, _ = x.shape  # [B, S, D]
 
@@ -69,22 +92,18 @@ class MultiHeadLatentAttention(nn.Module):
         q_nope, q_rope = torch.split(
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
         )  # [B, S, H, d_qk_nope], [B, S, H, d_qk_rope]
-        q_rope = self.rope._apply_rope(
-            q_rope, self.rope.freqs_cis
-        )  # [B, S, H, d_qk_rope]
+        q_rope = apply_rope(q_rope, freqs_cis)  # [B, S, H, d_qk_rope]
         q = torch.cat([q_nope, q_rope], dim=-1)  # [B, S, H, d_qk]
 
         # Key and Value down projection
         kv = self.wkv_a(x)  # [B, S, kv_lora_rank + d_qk_rope]
 
         kv, k_rope = torch.split(
-            kv, [self.kv_lora_rank, self.qk_rope_head_dim]
+            kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
         )  # [B, S, kv_lora_rank], [B, S, d_qk_rope]
 
         k_rope = k_rope.unsqueeze(2)  # [B, S, 1, d_qk_rope]
-        k_rope = self.rope._apply_rope(
-            k_rope, self.rope.freqs_cis
-        )  # [B, S, 1, d_qk_rope]
+        k_rope = apply_rope(k_rope, freqs_cis)  # [B, S, 1, d_qk_rope]
 
         # Key and Value Up projection
         kv = self.wkv_b(self.kv_norm(kv))  # [B, S, H * (d_qk_nope + d_v)]
