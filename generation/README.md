@@ -43,6 +43,50 @@ Required behavior:
 10. Why is completion state naturally shaped `[B]` rather than `[B, 1]`?
 11. Why must checks use `eos_token_id is not None` instead of its truth value?
 
+## Exercise 2: Stochastic sampling
+
+Implement a vocabulary-level selection helper and integrate it with cached
+generation:
+
+```python
+sample_next_token(...)
+generate_sampled(...)
+```
+
+Required behavior:
+
+- Accept last-position logits shaped `[B, V]`.
+- Apply positive temperature scaling.
+- Optionally retain exactly the top `k` vocabulary candidates.
+- Optionally retain the smallest high-probability nucleus whose cumulative
+  mass reaches `top_p`.
+- Keep the token that crosses the top-p threshold.
+- Renormalize retained candidates before multinomial sampling.
+- Draw one `[B, 1]` token-ID tensor with an optional `torch.Generator`.
+- Keep filtering in full vocabulary order so processors compose naturally.
+- Reuse one advancing generator throughout cached generation.
+- Preserve all greedy cache, EOS, and sequence-shape behavior.
+
+### Discussion questions
+
+1. How does temperature below or above one change distribution sharpness?
+2. Why is temperature zero invalid in the sampling formula?
+3. Why does `torch.multinomial` require probabilities or non-negative weights
+   rather than raw logits?
+4. Why does a seeded `torch.Generator` improve reproducibility?
+5. Why is top-k based on the largest logits?
+6. Why does `top_k=1` reduce sampling to greedy selection?
+7. What is the tradeoff between sampling compact `[B, K]` values and masking a
+   vocabulary-aligned `[B, V]` tensor?
+8. Why does top-p sort tokens before computing cumulative probability?
+9. Why must the token that crosses `top_p` remain eligible?
+10. Why does shifting an overlapping tensor slice require `clone()`?
+11. How does the final softmax renormalize the retained probability mass?
+12. When both filters are enabled, why does applying top-k before top-p make
+    top-p operate on the top-k distribution?
+13. Which parts of cached generation are independent of the token-selection
+    policy?
+
 ## Current checkpoint
 
 Completed:
@@ -51,11 +95,15 @@ Completed:
 - KV-cached greedy generation.
 - Batched EOS handling and early stopping.
 - Controlled fake-model tests and real-decoder equivalence.
+- Temperature sampling.
+- Top-k filtering.
+- Top-p/nucleus filtering.
+- Seeded and reproducible multinomial sampling.
+- KV-cached sampled generation with EOS handling.
+- Greedy equivalence when `top_k=1`.
 
 Next:
 
-1. Temperature sampling.
-2. Top-k filtering.
-3. Top-p/nucleus filtering.
-4. Sampling integration with cached generation.
-5. Repetition penalties.
+1. Repetition penalties.
+2. Additional logit processors where useful.
+3. Final generation API cleanup and documentation.
