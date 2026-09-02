@@ -4,6 +4,7 @@ from torch import nn
 
 from decoder_model import DecoderModel
 from generation import generate_greedy, generate_sampled, sample_next_token
+from generation.sampling import apply_repetition_penalty
 
 
 class RecordingSamplingDecoder(DecoderModel):
@@ -48,6 +49,111 @@ class RecordingSamplingDecoder(DecoderModel):
             cached_ids = torch.cat((previous_ids, input_ids), dim=-1)
 
         return logits, [(cached_ids, cached_ids.clone())]
+
+
+class FixedPenaltyDecoder(nn.Module):
+    """Return fixed logits that expose which token IDs receive a penalty."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.vocab_size = 4
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        *,
+        use_cache: bool = False,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+        assert use_cache
+        logits = torch.zeros(
+            *input_ids.shape,
+            self.vocab_size,
+            device=input_ids.device,
+        )
+        logits[..., 1] = 4.0
+        logits[..., 2] = 3.0
+        logits[..., 3] = 2.5
+
+        if kv_caches is None:
+            cached_ids = input_ids.clone()
+        else:
+            cached_ids = torch.cat((kv_caches[0][0], input_ids), dim=-1)
+
+        return logits, [(cached_ids, cached_ids.clone())]
+
+
+def test_repetition_penalty_is_sign_aware_and_batch_specific() -> None:
+    logits = torch.tensor(
+        [
+            [4.0, -3.0, 2.0, -1.0, 0.0],
+            [-5.0, 6.0, -2.0, 3.0, 1.0],
+        ]
+    )
+    input_ids = torch.tensor(
+        [
+            [0, 1, 1],
+            [4, 2, 2],
+        ]
+    )
+
+    actual = apply_repetition_penalty(logits, input_ids, penalty=2.0)
+
+    expected = torch.tensor(
+        [
+            [2.0, -6.0, 2.0, -1.0, 0.0],
+            [-5.0, 6.0, -4.0, 3.0, 0.5],
+        ]
+    )
+    torch.testing.assert_close(actual, expected)
+
+
+def test_repetition_penalty_preserves_input_and_penalizes_duplicate_once() -> None:
+    logits = torch.tensor([[1.0, -2.0, 6.0]])
+    original = logits.clone()
+    input_ids = torch.tensor([[2, 2, 2]])
+
+    penalized = apply_repetition_penalty(logits, input_ids, penalty=3.0)
+
+    torch.testing.assert_close(logits, original)
+    torch.testing.assert_close(penalized, torch.tensor([[1.0, -2.0, 2.0]]))
+
+
+@pytest.mark.parametrize("penalty", [0.0, -1.0, 0.5, float("nan")])
+def test_repetition_penalty_rejects_values_below_one_or_nan(
+    penalty: float,
+) -> None:
+    logits = torch.tensor([[1.0, 2.0]])
+    input_ids = torch.tensor([[0]])
+
+    with pytest.raises(ValueError, match="(?i)penalty"):
+        apply_repetition_penalty(logits, input_ids, penalty)
+
+
+def test_repetition_penalty_one_is_identity() -> None:
+    logits = torch.tensor([[1.0, -2.0, 3.0]])
+    input_ids = torch.tensor([[0, 2]])
+
+    actual = apply_repetition_penalty(logits, input_ids, penalty=1.0)
+
+    torch.testing.assert_close(actual, logits)
+
+
+def test_generate_sampled_penalizes_prompt_and_growing_history() -> None:
+    model = FixedPenaltyDecoder()
+    input_ids = torch.tensor([[1]])
+
+    generated = generate_sampled(
+        model,
+        input_ids,
+        max_new_tokens=2,
+        top_k=1,
+        penalty=2.0,
+    )
+
+    # Token 1 is penalized from the prompt, so token 2 is selected first.
+    # Then tokens 1 and 2 are penalized, so token 3 is selected next.
+    torch.testing.assert_close(generated, torch.tensor([[1, 2, 3]]))
 
 
 @pytest.mark.parametrize("temperature", [0.0, -0.5])

@@ -87,6 +87,51 @@ Required behavior:
 13. Which parts of cached generation are independent of the token-selection
     policy?
 
+## Exercise 3: Repetition penalty
+
+Add a repetition-penalty processor to sampled generation. Before temperature
+scaling and probability filtering, adjust the logits of vocabulary tokens that
+already occur in the current sequence.
+
+Required behavior:
+
+- Accept next-token logits shaped `[B, V]` and token histories shaped `[B, S]`.
+- Use a multiplicative penalty greater than or equal to one.
+- Make repeated tokens less likely whether their logits are positive or
+  negative.
+- Apply the penalty once based on token presence, not repeatedly based on the
+  number of occurrences.
+- Keep unrelated vocabulary logits unchanged and preserve the caller's input
+  logits.
+- Apply the penalty to prompt tokens for the first post-prefill selection.
+- Apply it to the complete prompt-plus-generated history during decoding.
+- Treat one as an identity fast path and reject invalid or NaN penalties.
+- Compose the processor before temperature, top-k, and top-p sampling.
+
+### Discussion questions
+
+1. Why does dividing every repeated-token logit by the penalty fail for
+   negative logits?
+2. Why does multiplying every repeated-token logit by the penalty fail for
+   positive logits?
+3. How does the sign-aware transformation ensure that both cases become less
+   likely?
+4. How do `gather` and `scatter` operate on `[B, V]` logits using `[B, S]`
+   token IDs without constructing a `[B, S, V]` tensor?
+5. Why do duplicate history IDs not cause the multiplicative penalty to be
+   applied repeatedly?
+6. Why is a Python `set` unsuitable for batched, device-resident token IDs?
+7. What is the difference between a presence-based repetition penalty and a
+   frequency-based penalty?
+8. Why does the conventional policy include prompt tokens, and when might a
+   generated-only policy be preferable?
+9. Which history is available for the first post-prefill selection and for
+   later cached decode selections?
+10. Why should logit processors run before top-k and top-p filtering?
+11. Why does `penalty < 1` fail to reject NaN, while testing whether the
+    penalty is not at least one succeeds?
+12. What work is avoided by returning immediately when the penalty is one?
+
 ## Current checkpoint
 
 Completed:
@@ -101,9 +146,11 @@ Completed:
 - Seeded and reproducible multinomial sampling.
 - KV-cached sampled generation with EOS handling.
 - Greedy equivalence when `top_k=1`.
+- Sign-aware repetition penalties over prompt-plus-generated history.
+- Batched gather/scatter processing with duplicate-token and input-preservation
+  coverage.
 
 Next:
 
-1. Repetition penalties.
-2. Additional logit processors where useful.
-3. Final generation API cleanup and documentation.
+1. Additional logit processors where useful.
+2. Final generation API cleanup and documentation.
