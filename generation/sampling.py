@@ -4,17 +4,21 @@ from decoder_model import DecoderModel
 
 
 def apply_repetition_penalty(
-    logits: torch.Tensor, input_ids: torch.Tensor, penalty: float
+    logits: torch.Tensor, input_ids: torch.Tensor, repetition_penalty: float
 ) -> torch.Tensor:
-    if penalty == 1:
+    if repetition_penalty == 1:
         return logits
-    elif not penalty >= 1:
-        raise ValueError(f"Expected penalty to be 1 or greater, got: {penalty}")
+    elif not repetition_penalty >= 1:
+        raise ValueError(
+            f"Expected repetition_penalty to be 1 or greater, got: {repetition_penalty}"
+        )
 
     penalized = logits.clone()  # [B, V]
     history_logits = torch.gather(logits, dim=-1, index=input_ids)  # [B, S]
     penalized_logits = torch.where(
-        history_logits >= 0, history_logits / penalty, history_logits * penalty
+        history_logits >= 0,
+        history_logits / repetition_penalty,
+        history_logits * repetition_penalty,
     )  # [B, S]
     penalized.scatter_(-1, input_ids, penalized_logits)  # [B, V]
 
@@ -85,7 +89,7 @@ def generate_sampled(
     top_p: float | None = None,
     eos_token_id: int | None = None,
     generator: torch.Generator | None = None,
-    penalty: float = 1.0,
+    repetition_penalty: float = 1.0,
 ) -> torch.Tensor:
     if max_new_tokens == 0:
         return input_ids
@@ -95,7 +99,7 @@ def generate_sampled(
         input_ids, use_cache=True
     )  # [B, S, V], [([B, H, S, D], [B, H, S, D])] * n_layer
     next_logits = prefill_logits[:, -1, :]
-    next_logits = apply_repetition_penalty(next_logits, input_ids, penalty)
+    next_logits = apply_repetition_penalty(next_logits, input_ids, repetition_penalty)
     first_token = sample_next_token(
         next_logits,
         temperature=temperature,
