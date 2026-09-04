@@ -1,8 +1,8 @@
 import torch
 from torch import nn
 
+from normalization import RMSNorm
 from positional_encoding import RotaryPositionalEncoding
-from rms_norm import RMSNorm
 from transformer_block import TransformerBlock
 
 

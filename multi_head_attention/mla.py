@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from rms_norm import RMSNorm
+from normalization import RMSNorm
 
 
 def precompute_freqs_cis(seq_len: int, base: int, head_dim: int) -> torch.Tensor:

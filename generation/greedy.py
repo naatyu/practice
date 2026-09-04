@@ -1,11 +1,9 @@
 import torch
 
-from decoder_model import DecoderModel
-
 
 @torch.inference_mode()
 def generate_greedy_naive(
-    model: DecoderModel,
+    model: torch.nn.Module,
     input_ids: torch.Tensor,
     max_new_tokens: int = 256,
     eos_token_id: int | None = None,
@@ -44,7 +42,7 @@ def generate_greedy_naive(
 
 @torch.inference_mode()
 def generate_greedy(
-    model: DecoderModel,
+    model: torch.nn.Module,
     input_ids: torch.Tensor,
     max_new_tokens: int = 256,
     eos_token_id: int | None = None,

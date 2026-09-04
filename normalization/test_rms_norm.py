@@ -1,6 +1,6 @@
 import torch
 
-from rms_norm import RMSNorm
+from normalization import RMSNorm
 
 
 def test_versus_pytorch() -> None:

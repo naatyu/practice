@@ -1,7 +1,5 @@
 import torch
 
-from decoder_model import DecoderModel
-
 
 def apply_repetition_penalty(
     logits: torch.Tensor, input_ids: torch.Tensor, repetition_penalty: float
@@ -81,7 +79,7 @@ def sample_next_token(
 
 @torch.inference_mode()
 def generate_sampled(
-    model: DecoderModel,
+    model: torch.nn.Module,
     input_ids: torch.Tensor,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
@@ -120,7 +118,9 @@ def generate_sampled(
             current_generation[:, -1].unsqueeze(-1), use_cache=True, kv_caches=kv_caches
         )  # [B, 1, V]
         next_logits = logits.squeeze(1)
-        next_logits = apply_repetition_penalty(next_logits, current_generation, penalty)
+        next_logits = apply_repetition_penalty(
+            next_logits, current_generation, repetition_penalty
+        )
         next_tokens = sample_next_token(
             next_logits,
             temperature=temperature,

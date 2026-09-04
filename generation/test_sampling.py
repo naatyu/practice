@@ -23,9 +23,7 @@ class RecordingSamplingDecoder(DecoderModel):
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         *,
         use_cache: bool = False,
-    ) -> torch.Tensor | tuple[
-        torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]
-    ]:
+    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         self.seen_inputs.append(input_ids.clone())
         self.grad_enabled.append(torch.is_grad_enabled())
 
@@ -97,7 +95,7 @@ def test_repetition_penalty_is_sign_aware_and_batch_specific() -> None:
         ]
     )
 
-    actual = apply_repetition_penalty(logits, input_ids, penalty=2.0)
+    actual = apply_repetition_penalty(logits, input_ids, repetition_penalty=2.0)
 
     expected = torch.tensor(
         [
@@ -113,7 +111,7 @@ def test_repetition_penalty_preserves_input_and_penalizes_duplicate_once() -> No
     original = logits.clone()
     input_ids = torch.tensor([[2, 2, 2]])
 
-    penalized = apply_repetition_penalty(logits, input_ids, penalty=3.0)
+    penalized = apply_repetition_penalty(logits, input_ids, repetition_penalty=3.0)
 
     torch.testing.assert_close(logits, original)
     torch.testing.assert_close(penalized, torch.tensor([[1.0, -2.0, 2.0]]))
@@ -134,7 +132,7 @@ def test_repetition_penalty_one_is_identity() -> None:
     logits = torch.tensor([[1.0, -2.0, 3.0]])
     input_ids = torch.tensor([[0, 2]])
 
-    actual = apply_repetition_penalty(logits, input_ids, penalty=1.0)
+    actual = apply_repetition_penalty(logits, input_ids, repetition_penalty=1.0)
 
     torch.testing.assert_close(actual, logits)
 
@@ -148,7 +146,7 @@ def test_generate_sampled_penalizes_prompt_and_growing_history() -> None:
         input_ids,
         max_new_tokens=2,
         top_k=1,
-        penalty=2.0,
+        repetition_penalty=2.0,
     )
 
     # Token 1 is penalized from the prompt, so token 2 is selected first.

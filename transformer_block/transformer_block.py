@@ -3,8 +3,8 @@ from torch import nn
 
 from mlp import SwiGLU
 from multi_head_attention import MultiHeadAttention
+from normalization import RMSNorm
 from positional_encoding import RotaryPositionalEncoding
-from rms_norm import RMSNorm
 
 
 class TransformerBlock(nn.Module):
