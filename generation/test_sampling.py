@@ -3,8 +3,26 @@ import torch
 from torch import nn
 
 from decoder_model import DecoderModel
-from generation import generate_greedy, generate_sampled, sample_next_token
+from generation import (
+    generate_greedy,
+    generate_sampled,
+    logits_to_probabilities,
+    sample_next_token,
+)
 from generation.sampling import apply_repetition_penalty
+
+
+def test_logits_to_probabilities_does_not_advance_generator() -> None:
+    logits = torch.tensor([[1.0, 2.0, 3.0]])
+    generator = torch.Generator().manual_seed(7)
+    expected_random_value = torch.rand((), generator=generator)
+
+    generator.manual_seed(7)
+    probabilities = logits_to_probabilities(logits, temperature=0.5, top_k=2)
+    actual_random_value = torch.rand((), generator=generator)
+
+    torch.testing.assert_close(probabilities.sum(dim=-1), torch.ones(1))
+    torch.testing.assert_close(actual_random_value, expected_random_value)
 
 
 class RecordingSamplingDecoder(DecoderModel):
@@ -181,19 +199,20 @@ def test_sample_next_token_matches_seeded_reference() -> None:
         num_samples=1,
         generator=expected_generator,
     )
-    actual = sample_next_token(
+    actual, actual_probabilities = sample_next_token(
         logits,
         temperature=temperature,
         generator=actual_generator,
     )
 
     torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_probabilities, probabilities)
 
 
 def test_sample_next_token_returns_one_long_id_per_batch_row() -> None:
     logits = torch.randn(5, 11)
 
-    token_ids = sample_next_token(
+    token_ids, _ = sample_next_token(
         logits,
         generator=torch.Generator().manual_seed(0),
     )
@@ -208,8 +227,8 @@ def test_sample_next_token_is_reproducible_with_seeded_generators() -> None:
     first_generator = torch.Generator().manual_seed(7)
     second_generator = torch.Generator().manual_seed(7)
 
-    first = sample_next_token(logits, generator=first_generator)
-    second = sample_next_token(logits, generator=second_generator)
+    first, _ = sample_next_token(logits, generator=first_generator)
+    second, _ = sample_next_token(logits, generator=second_generator)
 
     torch.testing.assert_close(first, second)
 
@@ -230,7 +249,7 @@ def test_top_k_one_is_equivalent_to_greedy_selection() -> None:
         ]
     )
 
-    sampled = sample_next_token(
+    sampled, _ = sample_next_token(
         logits,
         temperature=2.0,
         top_k=1,
@@ -265,7 +284,7 @@ def test_top_k_matches_seeded_masked_logit_reference() -> None:
         num_samples=1,
         generator=expected_generator,
     )
-    actual = sample_next_token(
+    actual, _ = sample_next_token(
         logits,
         temperature=temperature,
         top_k=top_k,
@@ -280,8 +299,8 @@ def test_top_k_vocab_size_matches_unfiltered_sampling() -> None:
     unfiltered_generator = torch.Generator().manual_seed(3)
     top_k_generator = torch.Generator().manual_seed(3)
 
-    unfiltered = sample_next_token(logits, generator=unfiltered_generator)
-    top_k_all = sample_next_token(
+    unfiltered, _ = sample_next_token(logits, generator=unfiltered_generator)
+    top_k_all, _ = sample_next_token(
         logits,
         top_k=logits.shape[-1],
         generator=top_k_generator,
@@ -340,7 +359,7 @@ def test_top_p_matches_seeded_nucleus_reference() -> None:
         num_samples=1,
         generator=expected_generator,
     )
-    actual = sample_next_token(
+    actual, _ = sample_next_token(
         logits,
         top_p=top_p,
         generator=actual_generator,
@@ -357,7 +376,7 @@ def test_very_small_top_p_keeps_highest_logit() -> None:
         ]
     )
 
-    sampled = sample_next_token(
+    sampled, _ = sample_next_token(
         logits,
         top_p=1e-6,
         generator=torch.Generator().manual_seed(0),
@@ -371,8 +390,8 @@ def test_top_p_one_matches_unfiltered_sampling() -> None:
     unfiltered_generator = torch.Generator().manual_seed(17)
     top_p_generator = torch.Generator().manual_seed(17)
 
-    unfiltered = sample_next_token(logits, generator=unfiltered_generator)
-    top_p_one = sample_next_token(
+    unfiltered, _ = sample_next_token(logits, generator=unfiltered_generator)
+    top_p_one, _ = sample_next_token(
         logits,
         top_p=1.0,
         generator=top_p_generator,
@@ -385,7 +404,7 @@ def test_top_p_composes_with_top_k_and_preserves_input() -> None:
     logits = torch.tensor([[5.0, 4.0, 3.0, 2.0, 1.0]]).repeat(50, 1)
     original = logits.clone()
 
-    samples = sample_next_token(
+    samples, _ = sample_next_token(
         logits,
         top_k=3,
         top_p=0.8,

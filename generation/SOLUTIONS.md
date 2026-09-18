@@ -189,7 +189,60 @@ unchanged unrelated tokens, duplicate IDs, caller-input preservation, the
 identity factor, invalid and NaN factors, prompt processing during prefill, and
 growth of the processed history across cached decoding steps.
 
+## Speculative decoding
+
+The draft model proposes a block autoregressively and records both the sampled
+token IDs and the complete processed draft distributions. The target model
+then evaluates the prompt plus proposal block in one parallel forward pass.
+For a prompt of length `S` and `N` proposals, target positions from `S - 1`
+through `S + N - 1` provide `N + 1` distributions: one for every proposal and
+one for the bonus token.
+
+A proposed token is accepted with the target-to-draft probability ratio capped
+at one. If the draft under-proposes it, it is always accepted. If the draft
+over-proposes it, probabilistic rejection removes the excess draft mass. On a
+rejection, sampling from the normalized positive part of the target-minus-draft
+distribution restores exactly the missing target mass. Sampling directly from
+the target distribution at that point would count some probability mass twice.
+All later proposals are discarded because each was conditioned on a prefix
+containing the rejected token.
+
+If all proposals are accepted, the final target distribution supplies a bonus
+token. This bonus is important because the target call should normally advance
+generation beyond merely confirming the draft block. Temperature, logit
+processors, and probability filters must match between models; otherwise the
+acceptance ratio compares different sampling policies rather than the actual
+draft and target distributions.
+
+The reference implementation deliberately recomputes prefixes and handles one
+sequence. It makes probability alignment and rejection behavior easy to audit.
+The cached implementation instead prefills both models once, advances draft
+proposals with the draft cache, and checks the whole proposal block with one
+target call. Draft and target caches remain independent because their layers,
+weights, head counts, and hidden representations can differ.
+
+After verification, speculative cache entries beyond the committed prefix are
+invalid. Cache rollback does not require clearing their bytes: restricting each
+cache tensor to the committed logical length makes stale entries invisible,
+and later decoding overwrites them. The final committed position is recomputed
+after rollback because it may be a correction token instead of the stored draft
+proposal.
+
+Rectangular batched cache tensors require a common sequence length. The batched
+implementation therefore commits the shortest verified prefix across all rows.
+Rows with longer valid prefixes are safely truncated, while rows that reject at
+the shared boundary insert their correction token. This preserves batched model
+calls and correctness but creates a throughput tradeoff: one low-acceptance row
+can limit progress for the entire batch. Production systems can avoid some of
+that coupling with sequence scheduling and paged or ragged cache management.
+
+EOS is handled at the earliest newly finished position in a round so no cache
+contains tokens after a sequence's first EOS. Already-finished rows emit EOS
+while unfinished rows continue, preserving rectangular batch shapes. Tests
+cover acceptance, correction, bonus sampling, exact output lengths, EOS,
+mixed-row rejection, cache call sizes, and compatibility with the real decoder.
+
 ## Next
 
-Generation can next add other useful logit processors or proceed to final API
-cleanup before speculative decoding.
+Generation can next explore preallocated or paged KV-cache storage, or proceed
+to final API cleanup.

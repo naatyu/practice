@@ -132,6 +132,52 @@ Required behavior:
     penalty is not at least one succeeds?
 12. What work is avoided by returning immediately when the penalty is one?
 
+## Exercise 4: Speculative decoding
+
+Implement speculative sampling with a smaller draft model and a target model
+that share the same tokenizer and vocabulary semantics.
+
+Build it in three stages:
+
+1. Write a single-sequence, uncached reference implementation.
+2. Repeat reference rounds with exact maximum-length and EOS handling.
+3. Add a genuinely batched version using independent draft and target KV
+   caches.
+
+Required behavior:
+
+- Save every draft proposal and its complete filtered probability
+  distribution.
+- Verify all proposals with one parallel target-model block call.
+- Accept proposals with the standard target-to-draft probability ratio.
+- At the first rejection, sample from the normalized positive residual between
+  the target and draft distributions.
+- If every proposal is accepted, sample one bonus token from the final target
+  distribution.
+- Apply temperature, top-k, top-p, and repetition penalty consistently to both
+  models' distributions.
+- Stop at the first EOS and never exceed the requested generation length.
+- Keep draft and target caches separate.
+- For rectangular batched caches, advance all rows by their longest common
+  verified prefix and roll speculative cache suffixes back logically.
+
+### Discussion questions
+
+1. Why must verification retain the full draft distribution rather than only
+   the probability of the proposed token?
+2. Which target-logit positions predict the proposals and bonus token?
+3. Why does rejecting a proposal invalidate every later proposal?
+4. Why is sampling directly from the target distribution after rejection
+   incorrect?
+5. Why must target and draft sampling processors be identical?
+6. Why can the target model verify several proposals in parallel?
+7. Why do the draft and target models need independent KV caches?
+8. How can cache rollback use a logical length without clearing memory?
+9. Why do rectangular batched caches require synchronized progress or a more
+   sophisticated paged/ragged cache representation?
+10. What throughput is lost when one batch row repeatedly rejects earlier than
+    the others?
+
 ## Current checkpoint
 
 Completed:
@@ -149,8 +195,11 @@ Completed:
 - Sign-aware repetition penalties over prompt-plus-generated history.
 - Batched gather/scatter processing with duplicate-token and input-preservation
   coverage.
+- Uncached single-sequence speculative sampling.
+- Batched cached speculative sampling with correction, bonus, EOS, rollback,
+  and real-decoder coverage.
 
 Next:
 
-1. Additional logit processors where useful.
-2. Final generation API cleanup and documentation.
+1. Optional preallocated or paged KV-cache storage.
+2. Final generation API cleanup.

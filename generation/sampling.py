@@ -23,13 +23,13 @@ def apply_repetition_penalty(
     return penalized
 
 
-def sample_next_token(
+def logits_to_probabilities(
     logits: torch.Tensor,
     temperature: float = 1.0,
-    generator: torch.Generator | None = None,
     top_k: int | None = None,
     top_p: float | None = None,
 ) -> torch.Tensor:
+    """Convert logits into a probability distribution after sampling filters."""
     if temperature <= 0:
         raise ValueError(f"Temperature must be > 0 but got: {temperature}")
     vocab_size = logits.shape[-1]
@@ -71,10 +71,25 @@ def sample_next_token(
 
         scaled_logits = scaled_logits.masked_fill_(remove_mask, float("-inf"))
 
-    probabilities = torch.softmax(scaled_logits, dim=-1)  #  [B, V]
+    return torch.softmax(scaled_logits, dim=-1)  # [..., V]
+
+
+def sample_next_token(
+    logits: torch.Tensor,
+    temperature: float = 1.0,
+    generator: torch.Generator | None = None,
+    top_k: int | None = None,
+    top_p: float | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    probabilities = logits_to_probabilities(
+        logits,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
+    )
     selected_token = torch.multinomial(probabilities, 1, generator=generator)  # [B, 1]
 
-    return selected_token
+    return selected_token, probabilities
 
 
 @torch.inference_mode()
@@ -98,7 +113,7 @@ def generate_sampled(
     )  # [B, S, V], [([B, H, S, D], [B, H, S, D])] * n_layer
     next_logits = prefill_logits[:, -1, :]
     next_logits = apply_repetition_penalty(next_logits, input_ids, repetition_penalty)
-    first_token = sample_next_token(
+    first_token, _ = sample_next_token(
         next_logits,
         temperature=temperature,
         generator=generator,
@@ -121,7 +136,7 @@ def generate_sampled(
         next_logits = apply_repetition_penalty(
             next_logits, current_generation, repetition_penalty
         )
-        next_tokens = sample_next_token(
+        next_tokens, _ = sample_next_token(
             next_logits,
             temperature=temperature,
             generator=generator,
