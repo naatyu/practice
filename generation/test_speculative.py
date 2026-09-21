@@ -36,6 +36,7 @@ class CachedBatchOffsetDecoder(nn.Module):
     def __init__(self, vocab_size: int, offsets: list[int]) -> None:
         super().__init__()
         self.vocab_size = vocab_size
+        self.offsets: torch.Tensor
         self.register_buffer("offsets", torch.tensor(offsets))
         self.seen_input_lengths: list[int] = []
         self.incoming_cache_lengths: list[int] = []

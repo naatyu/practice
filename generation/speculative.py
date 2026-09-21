@@ -1,5 +1,6 @@
 import torch
 
+from decoder_model import DecoderCache
 from generation.sampling import (
     apply_repetition_penalty,
     logits_to_probabilities,
@@ -44,7 +45,7 @@ def verify_speculative_tokens_batched(
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Verify a batch and return the longest common committed prefix [B, C]."""
-    batch_size, num_draft_tokens = draft_tokens.shape
+    num_draft_tokens = draft_tokens.shape[1]
     proposed_target_probs = torch.gather(
         target_probs[:, :num_draft_tokens],
         dim=-1,
@@ -59,11 +60,14 @@ def verify_speculative_tokens_batched(
     acceptance_probs = torch.clamp(
         proposed_target_probs / proposed_draft_probs, max=1
     )  # [B, N]
-    accepted = torch.rand(
-        acceptance_probs.shape,
-        generator=generator,
-        device=draft_tokens.device,
-    ) < acceptance_probs  # [B, N]
+    accepted = (
+        torch.rand(
+            acceptance_probs.shape,
+            generator=generator,
+            device=draft_tokens.device,
+        )
+        < acceptance_probs
+    )  # [B, N]
     rejected = ~accepted
     has_rejection = rejected.any(dim=-1)  # [B]
     first_rejection = rejected.to(torch.int64).argmax(dim=-1)  # [B]
@@ -101,9 +105,28 @@ def verify_speculative_tokens_batched(
 
 
 def _truncate_kv_caches(
-    kv_caches: list[tuple[torch.Tensor, torch.Tensor]], cache_length: int
-) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    kv_caches: DecoderCache | list[tuple[torch.Tensor, torch.Tensor]],
+    cache_length: int,
+) -> DecoderCache | list[tuple[torch.Tensor, torch.Tensor]]:
     """Return cache views restricted to a shared logical sequence length."""
+    if isinstance(kv_caches, DecoderCache):
+        rollback = kv_caches.position - cache_length
+        if rollback < 0:
+            raise ValueError("Cannot extend a cache while truncating it.")
+
+        truncated_layers = []
+        for key_cache, value_cache in kv_caches:
+            retained_length = key_cache.shape[-2] - rollback
+            if retained_length < 0:
+                raise ValueError("Cannot roll back beyond the stored KV cache.")
+            truncated_layers.append(
+                (
+                    key_cache[..., :retained_length, :],
+                    value_cache[..., :retained_length, :],
+                )
+            )
+        return DecoderCache(layers=truncated_layers, position=cache_length)
+
     return [
         (
             key_cache[..., :cache_length, :],
@@ -326,9 +349,7 @@ def generate_sampled_speculative_cached(
                 )
                 eos_probs = torch.zeros_like(next_probs)
                 eos_probs[:, eos_token_id] = 1
-                next_probs = torch.where(
-                    finished.unsqueeze(-1), eos_probs, next_probs
-                )
+                next_probs = torch.where(finished.unsqueeze(-1), eos_probs, next_probs)
 
             proposed_tokens.append(next_tokens)
             proposed_probs.append(next_probs)
@@ -373,9 +394,7 @@ def generate_sampled_speculative_cached(
         if eos_token_id is not None:
             eos_probs = torch.zeros_like(target_probs)
             eos_probs[..., eos_token_id] = 1
-            target_probs = torch.where(
-                finished[:, None, None], eos_probs, target_probs
-            )
+            target_probs = torch.where(finished[:, None, None], eos_probs, target_probs)
 
         committed_tokens = verify_speculative_tokens_batched(
             draft_tokens,
@@ -428,9 +447,7 @@ def generate_sampled_speculative_cached(
         )
         draft_next_logits = draft_last_logits[:, -1]
         target_next_logits = target_last_logits[:, -1]
-        current_generation = torch.cat(
-            (current_generation, committed_tokens), dim=-1
-        )
+        current_generation = torch.cat((current_generation, committed_tokens), dim=-1)
 
         if eos_token_id is not None and finished.all():
             break

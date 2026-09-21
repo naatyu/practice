@@ -35,9 +35,7 @@ def test_cache_shapes_after_prefill():
     torch.manual_seed(0)
     x = torch.randn((2, 5, 32))
     rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
-    block = TransformerBlock(
-        d_model=32, num_heads=4, hidden_dim=48, rope=rope
-    ).eval()
+    block = TransformerBlock(d_model=32, num_heads=4, hidden_dim=48, rope=rope).eval()
 
     output, (k_cache, v_cache) = block(x, use_cache=True)
 
@@ -51,9 +49,7 @@ def test_cached_block_matches_full_block_suffix():
     x = torch.randn((2, 7, 32))
     prompt_len = 4
     rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
-    block = TransformerBlock(
-        d_model=32, num_heads=4, hidden_dim=48, rope=rope
-    ).eval()
+    block = TransformerBlock(d_model=32, num_heads=4, hidden_dim=48, rope=rope).eval()
 
     full_output = block(x)
 

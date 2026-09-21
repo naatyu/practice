@@ -143,9 +143,5 @@ def test_complex_rope_preserves_low_precision_dtype(dtype: torch.dtype) -> None:
     assert rotated_q.shape == q.shape
     assert rotated_k.shape == k.shape
     tolerance = 4 * torch.finfo(dtype).eps
-    torch.testing.assert_close(
-        rotated_q, expected_q, rtol=tolerance, atol=tolerance
-    )
-    torch.testing.assert_close(
-        rotated_k, expected_k, rtol=tolerance, atol=tolerance
-    )
+    torch.testing.assert_close(rotated_q, expected_q, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(rotated_k, expected_k, rtol=tolerance, atol=tolerance)

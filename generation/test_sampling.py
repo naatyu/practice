@@ -25,7 +25,7 @@ def test_logits_to_probabilities_does_not_advance_generator() -> None:
     torch.testing.assert_close(actual_random_value, expected_random_value)
 
 
-class RecordingSamplingDecoder(DecoderModel):
+class RecordingSamplingDecoder(nn.Module):
     """Predict `(current_token + 1) % vocab_size` and record cache usage."""
 
     def __init__(self, vocab_size: int) -> None:

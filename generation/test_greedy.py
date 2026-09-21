@@ -5,7 +5,7 @@ from decoder_model import DecoderModel
 from generation import generate_greedy, generate_greedy_naive
 
 
-class IncrementingDecoder(DecoderModel):
+class IncrementingDecoder(nn.Module):
     """Predict token `(current_token + 1) % vocab_size` at every position."""
 
     def __init__(self, vocab_size: int) -> None:
@@ -21,9 +21,7 @@ class IncrementingDecoder(DecoderModel):
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         *,
         use_cache: bool = False,
-    ) -> torch.Tensor | tuple[
-        torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]
-    ]:
+    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         self.seen_inputs.append(input_ids.clone())
         self.grad_enabled.append(torch.is_grad_enabled())
 

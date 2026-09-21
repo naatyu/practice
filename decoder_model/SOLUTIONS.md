@@ -43,7 +43,7 @@ next token in the provided sequence, while `x0` has no preceding prediction.
 
 ```python
 prediction_logits = logits[:, :-1, :]  # (B, S - 1, V)
-targets = input_ids[:, 1:]              # (B, S - 1)
+targets = input_ids[:, 1:]  # (B, S - 1)
 ```
 
 `torch.nn.functional.cross_entropy` expects input shaped `(N, C, ...)`, where
@@ -66,7 +66,7 @@ An equivalent formulation moves vocabulary to dimension 1:
 ```python
 loss = torch.nn.functional.cross_entropy(
     prediction_logits.transpose(1, 2),  # (B, V, S - 1)
-    targets,                            # (B, S - 1)
+    targets,  # (B, S - 1)
 )
 ```
 

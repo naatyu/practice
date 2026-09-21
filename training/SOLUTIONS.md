@@ -28,7 +28,7 @@ predicts `C`, and the logit after `C` predicts `D`:
 
 ```python
 shifted_logits = logits[:, :-1, :]  # (B, S - 1, V)
-shifted_labels = labels[:, 1:]      # (B, S - 1)
+shifted_labels = labels[:, 1:]  # (B, S - 1)
 ```
 
 This training API expects unshifted labels aligned with input IDs and performs

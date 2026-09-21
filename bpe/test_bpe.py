@@ -69,9 +69,12 @@ def test_split_special_tokens_preserves_text_and_delimiters() -> None:
         special_tokens=["<|endoftext|>", "<|pad|>"],
     )
 
-    assert tokenizer._split_special_tokens(
-        "hello<|endoftext|>world<|pad|>"
-    ) == ["hello", "<|endoftext|>", "world", "<|pad|>"]
+    assert tokenizer._split_special_tokens("hello<|endoftext|>world<|pad|>") == [
+        "hello",
+        "<|endoftext|>",
+        "world",
+        "<|pad|>",
+    ]
 
 
 def test_split_special_tokens_prefers_longest_overlapping_token() -> None:
@@ -119,10 +122,10 @@ def test_pretokenize_preserves_unicode_whitespace_and_punctuation(
     chunks = tokenizer._pretokenize(text)
 
     assert chunks == [
-        list("hé".encode("utf-8")),
-        list("  ".encode("utf-8")),
-        list("42".encode("utf-8")),
-        list("!".encode("utf-8")),
+        list("hé".encode()),
+        list(b"  "),
+        list(b"42"),
+        list(b"!"),
     ]
     assert b"".join(bytes(chunk) for chunk in chunks).decode("utf-8") == text
 
@@ -162,26 +165,24 @@ def test_merge_pair_handles_empty_and_single_token_inputs() -> None:
 def test_merge_pair_replaces_all_non_overlapping_occurrences() -> None:
     token_ids = [1, 2, 1, 2, 3]
 
-    assert ByteLevelBPE.merge_pair(
-        token_ids, pair=(1, 2), new_token_id=10
-    ) == [10, 10, 3]
+    assert ByteLevelBPE.merge_pair(token_ids, pair=(1, 2), new_token_id=10) == [
+        10,
+        10,
+        3,
+    ]
 
 
 def test_merge_pair_does_not_merge_overlapping_occurrences() -> None:
     token_ids = [1, 1, 1]
 
-    assert ByteLevelBPE.merge_pair(
-        token_ids, pair=(1, 1), new_token_id=10
-    ) == [10, 1]
+    assert ByteLevelBPE.merge_pair(token_ids, pair=(1, 1), new_token_id=10) == [10, 1]
 
 
 def test_merge_pair_preserves_input_and_unmatched_tokens() -> None:
     token_ids = [1, 3, 2]
     original = token_ids.copy()
 
-    merged = ByteLevelBPE.merge_pair(
-        token_ids, pair=(1, 2), new_token_id=10
-    )
+    merged = ByteLevelBPE.merge_pair(token_ids, pair=(1, 2), new_token_id=10)
 
     assert merged == token_ids
     assert merged is not token_ids
@@ -253,9 +254,9 @@ def test_train_builds_tokens_from_multibyte_utf8_sequences() -> None:
 
     tokenizer.train("éé")
 
-    first_byte, second_byte = "é".encode("utf-8")
+    first_byte, second_byte = "é".encode()
     assert tokenizer.merges == [(first_byte, second_byte, 256)]
-    assert tokenizer.vocab[256] == "é".encode("utf-8")
+    assert tokenizer.vocab[256] == "é".encode()
 
 
 @pytest.mark.parametrize("corpus", ["", "a", ["", "a"]])
@@ -384,7 +385,7 @@ def test_encode_empty_text() -> None:
 def test_decode_joins_fragmented_utf8_bytes_before_decoding() -> None:
     tokenizer = ByteLevelBPE(pattern=r".+", vocab_size=256)
 
-    assert tokenizer.decode(list("é🙂".encode("utf-8"))) == "é🙂"
+    assert tokenizer.decode(list("é🙂".encode())) == "é🙂"
 
 
 def test_decode_expands_learned_tokens_through_the_vocabulary() -> None:
