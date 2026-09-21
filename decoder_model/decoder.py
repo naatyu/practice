@@ -5,6 +5,8 @@ from normalization import RMSNorm
 from positional_encoding import RotaryPositionalEncoding
 from transformer_block import TransformerBlock
 
+from .cache import DecoderCache
+
 
 class DecoderModel(nn.Module):
     def __init__(
@@ -18,6 +20,7 @@ class DecoderModel(nn.Module):
         num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope_base: float = 10_000,
+        window_size: int | None = None,
         *,
         tie_weights: bool = True,
     ):
@@ -33,6 +36,7 @@ class DecoderModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.rope_base = rope_base
         self.dropout_p = dropout_p
+        self.window_size = window_size
         self.d_head = self.d_model // self.num_heads
 
         # Layers
@@ -49,6 +53,7 @@ class DecoderModel(nn.Module):
                     hidden_dim=self.hidden_dim,
                     dropout_p=self.dropout_p,
                     rope=self.rope,
+                    window_size=self.window_size,
                 )
                 for _ in range(n_layers)
             ]
@@ -64,14 +69,15 @@ class DecoderModel(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        kv_caches: DecoderCache | None = None,
         *,
         use_cache: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> torch.Tensor | tuple[torch.Tensor, DecoderCache]:
         if use_cache and kv_caches is not None and len(kv_caches) != len(self.blocks):
             raise ValueError(
                 "KV cache number of layers does not match the model number of layers."
             )
+        position_offset = kv_caches.position if kv_caches is not None else 0
         updated_caches = []
         # Tokens embeddings, [B, S] -> [B, S, d_model]
         x = self.tok_emb(input_ids)
@@ -79,18 +85,28 @@ class DecoderModel(nn.Module):
         # Loop through transformer blocks
         for i, block in enumerate(self.blocks):
             if use_cache and kv_caches is not None:
-                x, updated_cache = block(x, kv_caches[i], use_cache=True)
+                x, updated_cache = block(
+                    x,
+                    kv_caches[i],
+                    use_cache=True,
+                    position_offset=position_offset,
+                )
                 updated_caches.append(updated_cache)
             elif use_cache and kv_caches is None:
-                x, updated_cache = block(x, use_cache=True)
+                x, updated_cache = block(
+                    x, use_cache=True, position_offset=position_offset
+                )
                 updated_caches.append(updated_cache)
             else:
-                x = block(x)
+                x = block(x, position_offset=position_offset)
 
         # Final norm
         x = self.final_norm(x)
 
         # Output logits
         if use_cache:
-            return self.lm_head(x), updated_caches
+            return self.lm_head(x), DecoderCache(
+                layers=updated_caches,
+                position=position_offset + input_ids.shape[-1],
+            )
         return self.lm_head(x)

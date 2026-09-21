@@ -16,6 +16,7 @@ class TransformerBlock(nn.Module):
         num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope: RotaryPositionalEncoding | None = None,
+        window_size: int | None = None,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -26,6 +27,7 @@ class TransformerBlock(nn.Module):
             num_kv_heads=num_kv_heads,
             dropout_p=dropout_p,
             rope=rope,
+            window_size=window_size,
         )
         self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)
         self.norm1 = RMSNorm(d_model, eps=eps)
@@ -37,14 +39,21 @@ class TransformerBlock(nn.Module):
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         *,
         use_cache: bool = False,
+        position_offset: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         if use_cache:
             attn_output, updated_cache = self.attn(
-                self.norm1(x), causal=True, use_cache=True, kv_cache=kv_cache
+                self.norm1(x),
+                causal=True,
+                use_cache=True,
+                kv_cache=kv_cache,
+                position_offset=position_offset,
             )
             x_attn = x + attn_output
         else:
-            x_attn = x + self.attn(self.norm1(x), causal=True)
+            x_attn = x + self.attn(
+                self.norm1(x), causal=True, position_offset=position_offset
+            )
         x_ffn = x_attn + self.ffn(self.norm2(x_attn))
 
         if use_cache:

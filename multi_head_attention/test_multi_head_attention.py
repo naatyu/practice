@@ -21,6 +21,9 @@ def test_construction() -> None:
     with pytest.raises(ValueError, match="divisible by num_kv_heads"):
         MultiHeadAttention(d_model=64, num_heads=8, num_kv_heads=3)
 
+    with pytest.raises(ValueError, match="window_size"):
+        MultiHeadAttention(d_model=64, num_heads=8, window_size=0)
+
 
 def test_output_shape() -> None:
     torch.manual_seed(0)
@@ -145,6 +148,29 @@ def test_cached_attention_matches_full_attention_suffix() -> None:
     assert updated_cache[1].shape[-2] == x.shape[1]
 
 
+def test_bounded_cache_requires_explicit_rope_position() -> None:
+    torch.manual_seed(0)
+    rope = RotaryPositionalEncoding(d_head=8, max_seq_len=16)
+    mha = MultiHeadAttention(
+        d_model=32,
+        num_heads=4,
+        rope=rope,
+        window_size=3,
+    ).eval()
+    prompt = torch.randn(2, 5, 32)
+    next_token = torch.randn(2, 1, 32)
+
+    _, cache = mha(
+        prompt,
+        causal=True,
+        use_cache=True,
+        position_offset=0,
+    )
+
+    with pytest.raises(ValueError, match="position_offset"):
+        mha(next_token, kv_cache=cache, causal=True, use_cache=True)
+
+
 @pytest.mark.parametrize("num_kv_heads", [2, 1])
 def test_gqa_and_mqa_output_and_projection_shapes(num_kv_heads: int) -> None:
     torch.manual_seed(0)
@@ -161,9 +187,7 @@ def test_gqa_and_mqa_output_and_projection_shapes(num_kv_heads: int) -> None:
     output = mha(x)
 
     assert output.shape == x.shape
-    assert mha.qkv.out_features == (
-        num_heads + 2 * num_kv_heads
-    ) * d_head
+    assert mha.qkv.out_features == (num_heads + 2 * num_kv_heads) * d_head
 
 
 @pytest.mark.parametrize("num_kv_heads", [2, 1])

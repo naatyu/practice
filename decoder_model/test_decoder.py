@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from decoder_model import DecoderModel
+from decoder_model import DecoderCache, DecoderModel
 
 
 @pytest.fixture
@@ -98,18 +98,15 @@ def test_cache_shapes_after_prefill(model_args, num_kv_heads):
     torch.manual_seed(0)
     batch_size = 2
     seq_len = 5
-    input_ids = torch.randint(
-        0, model_args["vocab_size"], (batch_size, seq_len)
-    )
+    input_ids = torch.randint(0, model_args["vocab_size"], (batch_size, seq_len))
     model = DecoderModel(**model_args, num_kv_heads=num_kv_heads).eval()
 
     logits, kv_caches = model(input_ids, use_cache=True)
 
     assert logits.shape == (batch_size, seq_len, model_args["vocab_size"])
+    assert kv_caches.position == seq_len
     assert len(kv_caches) == model_args["n_layers"]
-    assert all(
-        block.attn.num_kv_heads == model.num_kv_heads for block in model.blocks
-    )
+    assert all(block.attn.num_kv_heads == model.num_kv_heads for block in model.blocks)
     for k_cache, v_cache in kv_caches:
         expected_shape = (
             batch_size,
@@ -126,13 +123,15 @@ def test_rejects_wrong_number_of_layer_caches(model_args):
     input_ids = torch.randint(0, model_args["vocab_size"], (2, 1))
 
     with pytest.raises(ValueError, match="number of layers"):
-        model(input_ids, kv_caches=[], use_cache=True)
+        model(
+            input_ids,
+            kv_caches=DecoderCache(layers=[], position=0),
+            use_cache=True,
+        )
 
 
 @pytest.mark.parametrize("num_kv_heads", [None, 2, 1])
-def test_token_by_token_cached_logits_match_full_forward(
-    model_args, num_kv_heads
-):
+def test_token_by_token_cached_logits_match_full_forward(model_args, num_kv_heads):
     torch.manual_seed(0)
     input_ids = torch.randint(0, model_args["vocab_size"], (2, 8))
     prompt_len = 4
@@ -140,9 +139,7 @@ def test_token_by_token_cached_logits_match_full_forward(
 
     full_logits = model(input_ids)
 
-    prompt_logits, kv_caches = model(
-        input_ids[:, :prompt_len], use_cache=True
-    )
+    prompt_logits, kv_caches = model(input_ids[:, :prompt_len], use_cache=True)
     cached_logits = [prompt_logits]
 
     for position in range(prompt_len, input_ids.shape[1]):
@@ -161,3 +158,43 @@ def test_token_by_token_cached_logits_match_full_forward(
         assert v_cache.shape[1] == model.num_kv_heads
         assert k_cache.shape[-2] == input_ids.shape[1]
         assert v_cache.shape[-2] == input_ids.shape[1]
+
+
+@pytest.mark.parametrize("num_kv_heads", [None, 2, 1])
+def test_local_attention_uses_bounded_cache_and_absolute_positions(
+    model_args, num_kv_heads
+):
+    torch.manual_seed(0)
+    input_ids = torch.randint(0, model_args["vocab_size"], (2, 10))
+    prompt_len = 5
+    window_size = 3
+    model = DecoderModel(
+        **model_args,
+        num_kv_heads=num_kv_heads,
+        window_size=window_size,
+    ).eval()
+
+    full_logits = model(input_ids)
+    prompt_logits, cache = model(input_ids[:, :prompt_len], use_cache=True)
+    cached_logits = [prompt_logits]
+
+    assert cache.position == prompt_len
+    for key_cache, value_cache in cache:
+        assert key_cache.shape[-2] == window_size
+        assert value_cache.shape[-2] == window_size
+
+    for position in range(prompt_len, input_ids.shape[1]):
+        next_logits, cache = model(
+            input_ids[:, position : position + 1],
+            kv_caches=cache,
+            use_cache=True,
+        )
+        cached_logits.append(next_logits)
+
+    cached_logits = torch.cat(cached_logits, dim=1)
+
+    torch.testing.assert_close(cached_logits, full_logits, atol=1e-5, rtol=1e-5)
+    assert cache.position == input_ids.shape[1]
+    for key_cache, value_cache in cache:
+        assert key_cache.shape[-2] == window_size
+        assert value_cache.shape[-2] == window_size

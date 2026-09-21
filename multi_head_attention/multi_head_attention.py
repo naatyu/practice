@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from attention import attention
+from attention import attention, efficient_local_attention
 from positional_encoding import RotaryPositionalEncoding
 
 
@@ -22,6 +22,7 @@ class MultiHeadAttention(nn.Module):
         num_kv_heads: int | None = None,
         dropout_p: float = 0.0,
         rope: RotaryPositionalEncoding | None = None,
+        window_size: int | None = None,
     ) -> None:
         super().__init__()
         if num_kv_heads is None:
@@ -48,6 +49,10 @@ class MultiHeadAttention(nn.Module):
             raise ValueError(
                 f"Expected dropout in [0, 1] interval, got {dropout_p} instead."
             )
+        if window_size is not None and window_size <= 0:
+            raise ValueError(
+                f"Expected window_size to be greater than 0, got {window_size}."
+            )
 
         self.d_model = d_model
         self.num_heads = num_heads
@@ -55,6 +60,7 @@ class MultiHeadAttention(nn.Module):
         self.group_size = num_heads // num_kv_heads
         self.d_head = d_model // num_heads
         self.dropout_p = dropout_p
+        self.window_size = window_size
 
         # Check rope dimension value
         if rope is not None and rope.d_head != self.d_head:
@@ -76,6 +82,7 @@ class MultiHeadAttention(nn.Module):
         *,
         causal: bool = False,
         use_cache: bool = False,
+        position_offset: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, query_len, d_model = x.shape
 
@@ -96,9 +103,13 @@ class MultiHeadAttention(nn.Module):
         v = v.view(B, query_len, self.num_kv_heads, self.d_head).transpose(1, 2)
 
         if self.rope is not None:
-            q, k = self.rope(
-                q, k, offset=kv_cache[0].shape[-2] if kv_cache is not None else 0
-            )
+            if position_offset is None:
+                if self.window_size is not None and kv_cache is not None:
+                    raise ValueError(
+                        "position_offset is required with a bounded KV cache."
+                    )
+                position_offset = kv_cache[0].shape[-2] if kv_cache is not None else 0
+            q, k = self.rope(q, k, offset=position_offset)
 
         if kv_cache is not None:
             past_k, past_v = kv_cache
@@ -117,9 +128,19 @@ class MultiHeadAttention(nn.Module):
         grouped_k = k.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
         grouped_v = v.unsqueeze(2)  # [B, num_kv_heads, 1, key_len, d_head]
 
-        attn_out = attention(
-            grouped_q, grouped_k, grouped_v, dropout_p, causal=causal
-        )  # [B, num_kv_heads, group_size, query_len, d_head]
+        if self.window_size is not None and causal:
+            attn_out = efficient_local_attention(
+                grouped_q,
+                grouped_k,
+                grouped_v,
+                self.window_size,
+                dropout_p,
+            )
+        else:
+            attn_out = attention(
+                grouped_q, grouped_k, grouped_v, dropout_p, causal=causal
+            )
+        # [B, num_kv_heads, group_size, query_len, d_head]
         attn_out = attn_out.view(
             B, self.num_heads, query_len, self.d_head
         )  # [B, num_heads, query_len, d_head]
@@ -129,5 +150,8 @@ class MultiHeadAttention(nn.Module):
         )  # [B, query_len, d_model]
 
         if use_cache:
+            if self.window_size is not None:
+                k = k[..., -self.window_size :, :]
+                v = v[..., -self.window_size :, :]
             return self.out(attn_out), (k, v)
         return self.out(attn_out)
