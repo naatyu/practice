@@ -161,18 +161,21 @@ components belonging to their canonical designs.
 - Complete initial-state shape validation.
 - Finite gradients through Q, K, and V.
 
+`test_delta_net.py` covers controlled beta values, independent gates across
+batch items/heads/tokens, split-sequence continuation, optional final state,
+state shape validation, and gradients through Q, K, V, beta, and initial state.
+
 ## Handoff: resume here
 
-The next implementation is `naive_recurrent_delta_net` in a new
-`delta_net.py` file. Its interface and requirements are specified in
-`README.md`, Exercise 2.
+The next implementation is scalar-gated DeltaNet, described in `README.md`,
+Exercise 3. Plain recurrent linear attention and DeltaNet are complete and
+tested.
 
 Workflow:
 
 1. The learner implements the function and answers conceptual questions.
 2. The interviewer reviews without replacing the learner's code unnecessarily.
 3. The interviewer writes focused tests after the implementation is corrected.
-4. Continue to scalar-gated DeltaNet, then the channel-wise KDA recurrence.
+4. Continue to the channel-wise KDA recurrence after scalar-gated DeltaNet.
 5. Only after the recurrence is verified, implement the full layer with causal
    depthwise Q/K/V short convolutions and decoding caches.
-

@@ -57,7 +57,7 @@ final state so separate calls can continue the same sequence.
 7. Why does materializing every prefix state lose the memory advantage?
 8. What is the purpose of `initial_state` and `output_final_state`?
 
-## Exercise 2: DeltaNet recurrent correction (next)
+## Exercise 2: DeltaNet recurrent correction (completed)
 
 Create `delta_net.py` and implement:
 
@@ -178,8 +178,12 @@ Completed:
 - Plain recurrent linear attention.
 - Controlled, causal-reference, split-sequence, state-validation, and gradient
   tests.
+- DeltaNet recurrent correction with tokenwise beta.
+- DeltaNet tests for zero/partial/full correction, independent batch/head gates,
+  split-sequence continuation, optional state output, state validation, and
+  gradients.
 
-Resume with **Exercise 2: DeltaNet recurrent correction**. The learner writes
-the implementation; the interviewer reviews it and writes the tests. Ask one
+Resume with **Exercise 3: Gated DeltaNet**. The learner writes the
+implementation; the interviewer reviews it and writes the tests. Ask one
 focused conceptual question at a time, and do not jump directly to the final
 formula before checking the learner's understanding.
