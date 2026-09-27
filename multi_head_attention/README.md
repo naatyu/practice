@@ -47,3 +47,32 @@ support MHA, GQA, and MQA, including RoPE and compact KV caching.
 10. Why can GQA retain MHA-like quality more reliably than MQA?
 11. Which tests verify that the complete decoder actually uses compact GQA or
     MQA caches?
+
+## Exploratory exercise 3: Multi-Head Latent Attention (work in progress)
+
+Study and implement the main ideas behind Multi-Head Latent Attention (MLA):
+low-rank query and KV projections, separate non-positional and rotary key
+components, and inference-time weight absorption.
+
+This exercise is exploratory. The current implementation is not yet considered
+complete until its normal and absorbed paths have focused equivalence tests and
+its cache behavior is integrated with the decoder.
+
+### Discussion questions
+
+1. How is MLA's learned low-rank factorization different from adding LoRA
+   adapters to a frozen dense model?
+2. Which parameter, activation, and KV-cache costs are affected by the query
+   and KV low-rank branches?
+3. Why is the KV latent normalized between its down and up projections?
+4. Why are the non-positional and RoPE key dimensions separated?
+5. Why can the RoPE key branch remain shared across heads while the query RoPE
+   branch is produced per query head?
+6. What tensor shape should an MLA-specific RoPE helper accept, and how does it
+   differ from the repository's standard attention layout?
+7. Which dimensions must be contiguous before a `view` can merge them?
+8. What is weight absorption, and why can it avoid reconstructing full keys and
+   values during inference?
+9. What information must an MLA KV cache retain?
+10. Which equivalence, shape, dtype, causality, and cached-decoding tests are
+    required before the implementation can be considered complete?

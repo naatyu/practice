@@ -262,3 +262,51 @@ approach MHA quality while retaining much of MQA's memory and throughput gain.
 Strong tests cover MHA, GQA, and MQA; inspect fused projection and compact cache
 shapes; propagate `num_kv_heads` through every decoder layer; and compare full
 causal logits with prefill plus token-by-token cached decoding.
+
+## Multi-Head Latent Attention notes (work in progress)
+
+MLA uses trained factorized projections as part of the model architecture. This
+is not the same use case as LoRA fine-tuning, where low-rank update matrices are
+added to an existing dense weight, often while that dense weight is frozen.
+MLA's down and up projections are ordinary trainable model parameters from the
+start. The lower rank reduces parameter or activation costs, but it also
+constrains the projection through a lower-dimensional bottleneck and can reduce
+capacity if chosen too aggressively.
+
+The query low-rank branch reduces query-projection parameters and intermediate
+activations, but queries are not stored during autoregressive decoding, so it
+does not directly reduce the persistent KV cache. The KV branch is the crucial
+cache optimization: tokens are projected to a compact latent representation,
+which can be cached instead of storing fully expanded per-head keys and values.
+An RMS normalization between down and up projections keeps the latent scale
+controlled before it is expanded into head-specific features.
+
+MLA separates a non-positional key component from a RoPE component. The query
+projection produces per-head non-positional and rotary features, so query RoPE
+is applied after the query has been expanded and split into heads. The key RoPE
+feature is produced by a separate branch and may remain shared across heads;
+it is therefore rotated directly rather than passing through the head-specific
+KV up projection. Saying that RoPE is generally applied "before K up
+projection but after Q up projection" hides this architectural distinction:
+the two rotary components come from different branches with different sharing.
+
+The exploratory helper uses `[B, S, H, d_rope]`, whereas the repository's
+standard RoPE module uses `[B, H, S, d_head]`. Either convention can be valid,
+but the contract must be explicit and tests must prevent silent sequence/head
+axis swaps. A transpose changes strides without moving storage. Splitting a
+contiguous final feature dimension can usually use `view`; merging dimensions
+after a transpose requires that those dimensions be contiguous, or else a
+copying `reshape`/`contiguous` step is needed.
+
+Weight absorption algebraically combines the head-specific KV up-projection
+weights with the query and output projections. The intended inference path can
+then operate against cached latent KV features plus the separate rotary key
+component, avoiding reconstruction and storage of full per-head K/V tensors.
+This optimization needs strict equivalence tests against the straightforward
+path before it is trusted.
+
+The remaining completion criteria are tests for projection and RoPE shapes,
+normal versus absorbed output equivalence, causality, dtype/device behavior,
+gradient behavior for the training path, latent cache size, and full versus
+cached decoding equivalence. Until those exist, MLA remains a useful learning
+implementation rather than a completed repository component.

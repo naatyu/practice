@@ -1,5 +1,12 @@
 # LLM interview practice roadmap
 
+## Current checkpoint
+
+Completed through cached, batched speculative decoding. FlashAttention theory
+notes are complete, but its plain-PyTorch implementation is the next coding
+exercise. Multi-Head Latent Attention exists as an exploratory work in
+progress and is not yet considered a completed, tested roadmap stage.
+
 ## Completed foundations
 
 ### 1. Scaled dot-product attention
@@ -100,7 +107,7 @@
 - Quality, throughput, compute, and memory tradeoffs
 - End-to-end cached decoder equivalence for MHA, GQA, and MQA
 
-## Next core sequence
+## Core implementation sequence
 
 ### 12. Byte-level BPE (completed)
 
@@ -116,7 +123,7 @@
 - Round-trip tests
 - Efficient implementation strategies
 
-### 13. Generation
+### 13. Generation (completed)
 
 - Greedy decoding
 - Temperature
@@ -126,8 +133,11 @@
 - Repetition penalties
 - Batched generation
 - Integration with KV caching
+- Separation of probability construction from multinomial sampling
+- Seeded reproducibility and input-preservation tests
+- Controlled fake decoders and real-decoder integration tests
 
-### 14. Speculative decoding
+### 14. Speculative decoding (completed)
 
 - Draft and target model roles
 - Proposing multiple tokens with the draft model
@@ -140,8 +150,15 @@
 - KV-cache advancement, rollback, and synchronization
 - Expected speedup and when verification overhead removes the benefit
 - Tests against ordinary target-model decoding
+- Uncached single-sequence reference implementation
+- Batched acceptance and residual correction
+- Independent draft and target KV caches
+- Lockstep progress for rectangular batched caches
+- Logical cache rollback and final-position cache repair
+- Batched EOS handling and exact output-length limits
+- Real-decoder parity under deterministic sampling
 
-### 15. FlashAttention
+### 15. FlashAttention (next implementation)
 
 - Memory traffic versus arithmetic complexity
 - Query, key, and value tiling
@@ -150,6 +167,9 @@
 - Running weighted-value accumulator
 - Causal block handling
 - Comparison with ordinary attention
+
+Current status: interview questions and online-softmax derivation notes are
+written; the implementation file remains intentionally empty.
 
 ### 16. Local and sliding-window attention
 
@@ -240,6 +260,16 @@
 
 ## Advanced architectures and adaptation
 
+### Exploratory: Multi-Head Latent Attention (work in progress)
+
+- Low-rank query and KV projections
+- Decoupled non-positional and RoPE key dimensions
+- MLA-specific RoPE tensor layout
+- Weight absorption for inference
+- Latent KV-cache motivation and parameter-capacity tradeoffs
+- Still needs a stable public API, correctness tests, cache tests, and completed
+  absorbed-path verification before being marked complete
+
 ### 23. Mixture of Experts
 
 - Top-k routing
@@ -289,21 +319,22 @@
 ## Immediate path
 
 ```text
-byte-level BPE -> generation -> speculative decoding
--> FlashAttention -> local attention -> FLOP and memory accounting -> YaRN
+byte-level BPE [done] -> generation [done] -> speculative decoding [done]
+-> FlashAttention [next] -> local attention -> FLOP and memory accounting
+-> YaRN
 ```
 
 The order is intentional: the completed training loop proves that the decoder
 and stable loss can learn together; the completed KV-cache exercise exposes
 the main autoregressive inference memory problem; the completed MQA/GQA work
 reduces that cost;
-tokenization completes the input side of the model; generation combines the
-decoder, tokenizer, and cache; speculative decoding builds on generation and
-cache management to accelerate sampling without changing the target
-distribution; and FlashAttention deepens the analysis of attention performance
-during training and prefill. Local attention then changes the attention pattern
-itself, connecting long-context modeling with bounded computation and cache
-memory. FLOP and memory accounting consolidates the implemented components into
-quantitative model, training, prefill, and decode cost estimates.
-YaRN then extends the completed RoPE work into long-context scaling and
-evaluation.
+tokenization completes the input side of the model; the completed generation
+stage combines the decoder and cache with practical sampling; and the completed
+speculative-decoding stage adds distribution-preserving draft acceleration,
+batched verification, and cache rollback. FlashAttention is now the next step
+and deepens the analysis of attention performance during training and prefill.
+Local attention then changes the attention pattern itself, connecting
+long-context modeling with bounded computation and cache memory. FLOP and
+memory accounting consolidates the implemented components into quantitative
+model, training, prefill, and decode cost estimates. YaRN then extends the
+completed RoPE work into long-context scaling and evaluation.
