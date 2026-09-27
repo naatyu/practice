@@ -3,9 +3,12 @@
 ## Current checkpoint
 
 Completed through cached, batched speculative decoding. FlashAttention theory
-notes are complete, but its plain-PyTorch implementation is the next coding
-exercise. Multi-Head Latent Attention exists as an exploratory work in
-progress and is not yet considered a completed, tested roadmap stage.
+notes are complete, but its plain-PyTorch implementation is deferred. Local
+and sliding-window attention, including bounded-cache tests, has since been
+implemented. The active interview track is recurrent linear attention through
+an educational Kimi Delta Attention layer; resume with convolution-tail
+caching for correct split-sequence decoding. Multi-Head Latent Attention is
+exploratory work in progress, not a completed, tested roadmap stage.
 
 ## Completed foundations
 
@@ -158,7 +161,7 @@ progress and is not yet considered a completed, tested roadmap stage.
 - Batched EOS handling and exact output-length limits
 - Real-decoder parity under deterministic sampling
 
-### 15. FlashAttention (next implementation)
+### 15. FlashAttention (deferred implementation)
 
 - Memory traffic versus arithmetic complexity
 - Query, key, and value tiling
@@ -270,6 +273,20 @@ written; the implementation file remains intentionally empty.
 - Still needs a stable public API, correctness tests, cache tests, and completed
   absorbed-path verification before being marked complete
 
+### Active: Recurrent linear attention and Kimi Delta Attention
+
+- Plain recurrent linear attention, DeltaNet, scalar-gated DeltaNet, and the
+  channel-wise KDA recurrence are implemented and tested.
+- The educational KDA layer has causal depthwise Q/K/V convolutions, direct
+  sigmoid gates, per-head output RMSNorm, a learned output gate, and an output
+  projection; 10 focused KDA tests pass.
+- Next: cache the fixed-size Q/K/V convolution tails so split-sequence and
+  token-by-token calls match one full-sequence call. The recurrent matrix
+  state is already exposed but is not sufficient on its own.
+- Later: paper-aligned log-space decay, low-rank gates, and optional chunkwise
+  parallel training. See `linear_attention/README.md` for interview prompts and
+  `linear_attention/SOLUTIONS.md` for completed reasoning.
+
 ### 23. Mixture of Experts
 
 - Top-k routing
@@ -320,8 +337,8 @@ written; the implementation file remains intentionally empty.
 
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
--> FlashAttention [next] -> local attention -> FLOP and memory accounting
--> YaRN
+-> local/sliding-window attention [done] -> linear attention and KDA [active]
+-> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 
 The order is intentional: the completed training loop proves that the decoder
@@ -331,10 +348,9 @@ reduces that cost;
 tokenization completes the input side of the model; the completed generation
 stage combines the decoder and cache with practical sampling; and the completed
 speculative-decoding stage adds distribution-preserving draft acceleration,
-batched verification, and cache rollback. FlashAttention is now the next step
-and deepens the analysis of attention performance during training and prefill.
-Local attention then changes the attention pattern itself, connecting
-long-context modeling with bounded computation and cache memory. FLOP and
-memory accounting consolidates the implemented components into quantitative
-model, training, prefill, and decode cost estimates. YaRN then extends the
-completed RoPE work into long-context scaling and evaluation.
+batched verification, and cache rollback. Local attention changes the
+attention pattern itself and has now been implemented with bounded cache
+memory. The current linear-attention/KDA track explores fixed-size recurrent
+memory; its next step is making the full layer resumable across decode calls.
+FLOP and memory accounting, YaRN, and the deferred FlashAttention
+implementation remain available subsequent exercises.

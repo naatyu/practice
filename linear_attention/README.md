@@ -96,7 +96,7 @@ Required behavior:
    exactly the new value for that key?
 6. Which parts of the state remain unchanged by one rank-one correction?
 
-## Exercise 3: Gated DeltaNet
+## Exercise 3: Gated DeltaNet (completed)
 
 Extend DeltaNet with a learned scalar decay `alpha_t` per head and token.
 Decay the previous state before calculating the delta-rule prediction and
@@ -109,7 +109,7 @@ correction.
 3. Why must the correction use the already-decayed state?
 4. What limitation remains when one scalar controls the complete head state?
 
-## Exercise 4: Recurrent Kimi Delta Attention core
+## Exercise 4: Recurrent Kimi Delta Attention core (completed)
 
 Create `kimi_delta_attention.py`. Replace Gated DeltaNet's scalar decay with a
 channel-wise decay shaped `[B, H, S, Dk]`. Each key channel independently
@@ -135,7 +135,8 @@ Linear layer design while remaining readable.
 
 Required components:
 
-- Separate Q, K, and V projections.
+- Q, K, and V projections (a fused projection followed by a split is fine when
+  their projected widths are equal).
 - Separate causal depthwise short convolutions for projected Q, K, and V.
 - SiLU activation after each short convolution.
 - L2 normalization of Q and K.
@@ -174,16 +175,25 @@ correct recurrent implementation is the target of the educational track.
 
 Completed:
 
-- Package structure and tensor conventions.
-- Plain recurrent linear attention.
-- Controlled, causal-reference, split-sequence, state-validation, and gradient
-  tests.
-- DeltaNet recurrent correction with tokenwise beta.
-- DeltaNet tests for zero/partial/full correction, independent batch/head gates,
-  split-sequence continuation, optional state output, state validation, and
-  gradients.
+- Plain recurrent linear attention, DeltaNet, scalar-gated DeltaNet, and the
+  channel-wise recurrent KDA core.
+- Causal depthwise short convolution and its shape, causality, and
+  channel-independence tests.
+- An educational `KimiDeltaAttention` layer with fused QKV projection,
+  separate Q/K/V convolutions, SiLU, Q/K L2 normalization, direct sigmoid
+  alpha and beta gates, head-wise output RMSNorm, learned sigmoid output gate,
+  and final output projection.
+- Recurrent-state input/output is wired through the layer. The focused KDA test
+  file currently has 10 passing tests.
 
-Resume with **Exercise 3: Gated DeltaNet**. The learner writes the
-implementation; the interviewer reviews it and writes the tests. Ask one
-focused conceptual question at a time, and do not jump directly to the final
-formula before checking the learner's understanding.
+Resume with **Exercise 5: decoding continuity**. The layer carries the
+`[B, H, Dk, Dv]` recurrent state, but its Q/K/V convolutions currently pad
+each call independently. Ask whether processing a prefix and then one token
+can match a single full-sequence call when the convolution kernel is wider
+than one. Then design and test fixed-size Q/K/V convolution-tail caches.
+
+After that, revisit the paper-aligned log-space decay parameterization and
+low-rank gate projections. The current direct sigmoid gates are an intentional
+first working version, not a claim of exact paper parity. The learner writes
+the implementation; the interviewer writes tests and asks one focused
+conceptual question at a time.

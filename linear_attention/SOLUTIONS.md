@@ -128,11 +128,10 @@ The recurrent KDA token order is:
 4. Apply the beta-scaled key/error outer-product correction.
 5. Read the updated state with the current query.
 
-## Planned short-convolution layer
+## Short-convolution layer and output path
 
 The recurrent operator deliberately accepts already prepared Q, K, V, decay,
-and beta tensors. The full educational KDA layer will separately implement the
-paper's preprocessing path:
+and beta tensors. The educational layer now implements the preprocessing path:
 
 ```text
 Q projection -> causal depthwise ShortConv -> SiLU -> L2 normalization
@@ -140,10 +139,35 @@ K projection -> causal depthwise ShortConv -> SiLU -> L2 normalization
 V projection -> causal depthwise ShortConv -> SiLU
 ```
 
-The convolution is part of the actual KDA layer and must not be omitted. It
-also introduces three additional fixed-size decode states containing the
-recent projected Q/K/V inputs required by the convolution kernel. Keeping this
-logic outside the recurrent operator makes both pieces independently testable.
+The fused QKV projection produces `[B, S, 3*d_model]`, then splits it into
+three `[B, S, d_model]` tensors. A depthwise Conv1d has one time filter per
+channel: `groups=channels`. For kernel width `K`, left padding by `K-1` and
+no right padding preserves length and prevents future-token leakage. Conv1d
+expects `[B, C, S]`, so the wrapper transposes to and from `[B, S, C]`.
+
+After convolution and SiLU, split the projected channel dimension into heads:
+`[B, S, H, Dk] -> [B, H, S, Dk]`. Transposing the last two axes instead
+would swap `H` and `Dk`, not `S` and `H`. L2-normalize Q and K along `Dk`;
+V is not L2-normalized. A unit-length key makes a full-strength delta
+correction exactly overwrite the prediction for that key and controls the
+state-update scale.
+
+The recurrence returns `[B, H, S, Dv]`. The layer applies RMSNorm over each
+head's `Dv` features *before* merging heads; normalizing the merged
+`[B, S, d_model]` vector would couple their scales. A learned sigmoid gate
+projected from the layer input then attenuates features of the merged output,
+followed by the final output projection. This output gate is separate from
+alpha (memory decay) and beta (correction strength). The educational layer
+currently uses `Dk = Dv = d_model/H`, a direct sigmoid alpha projection, and
+a full-rank output gate; the paper's gate parameterizations remain future
+work.
+
+The convolution introduces three additional fixed-size decode states:
+the recent projected Q/K/V inputs needed by the kernel. The recurrent matrix
+state alone is insufficient to resume a full layer exactly. Each fresh
+one-token call currently pads its Q/K/V inputs with zeros, so it loses the
+prefix convolution context. Keeping convolution logic outside the recurrent
+operator makes both pieces independently testable.
 
 Plain linear attention does not receive a convolution merely because KDA uses
 one. Full wrappers for intermediate architectures should include only the
@@ -165,17 +189,26 @@ components belonging to their canonical designs.
 batch items/heads/tokens, split-sequence continuation, optional final state,
 state shape validation, and gradients through Q, K, V, beta, and initial state.
 
+`test_kimi_delta_attention.py` has 10 passing tests covering channel-wise
+decay, equivalence to scalar-gated DeltaNet when channels share a gate,
+split-sequence recurrent continuation, gradients, causal depthwise convolution,
+layer input shapes, per-head RMSNorm, and the presence of a learned output
+gate. It does **not** yet prove full-layer split-sequence equivalence.
+
 ## Handoff: resume here
 
-The next implementation is scalar-gated DeltaNet, described in `README.md`,
-Exercise 3. Plain recurrent linear attention and DeltaNet are complete and
-tested.
+The recurrent KDA core and educational full-sequence layer are implemented.
+The next interview question is: if a prefix is processed and its recurrent
+state passed into a second call for the next token, will the full layer match
+one call on the combined sequence? Why not when the convolution kernel is
+wider than one? The next implementation is Q/K/V convolution-tail caching,
+followed by a full-versus-split layer test.
 
 Workflow:
 
 1. The learner implements the function and answers conceptual questions.
 2. The interviewer reviews without replacing the learner's code unnecessarily.
 3. The interviewer writes focused tests after the implementation is corrected.
-4. Continue to the channel-wise KDA recurrence after scalar-gated DeltaNet.
-5. Only after the recurrence is verified, implement the full layer with causal
-   depthwise Q/K/V short convolutions and decoding caches.
+4. Preserve the learner's implementations unless asked to change them.
+5. After decoding continuity, revisit log-space decay and optional low-rank
+   gates; keep chunkwise training algorithms optional.
