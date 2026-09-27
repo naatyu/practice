@@ -11,6 +11,11 @@ def train_step(
     loss_fn: nn.Module,
     max_grad_norm: float | None = None,
 ):
+    """Run one shifted language-model training step.
+
+    Inputs: input_ids [B, S], labels [B, S]; the model returns
+    logits [B, S, vocab_size]. Output: scalar detached loss.
+    """
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
@@ -36,6 +41,11 @@ def train_accumulation_step(
     loss_fn: nn.Module,
     max_grad_norm: float | None = None,
 ):
+    """Accumulate gradients over shifted language-model microbatches.
+
+    Input: microbatches of (input_ids [B_i, S], labels [B_i, S]);
+    the model returns logits [B_i, S, vocab_size]. Output: scalar loss.
+    """
     if not microbatches:
         raise ValueError("Expected at least one microbatch.")
     model.train()

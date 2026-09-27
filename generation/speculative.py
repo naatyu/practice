@@ -14,6 +14,10 @@ def verify_speculative_tokens(
     target_probs: torch.Tensor,  # [N+1, V] N is the number of draft proposals
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
+    """Verify draft IDs [N] from draft [N, V] and target [N + 1, V] probabilities.
+
+    Return the committed token prefix, length one through N + 1.
+    """
     for i, token in enumerate(draft_tokens):
         p_y, q_y = target_probs[i, token], draft_probs[i, token]  # [], []
         accept_probs = torch.clamp(p_y / q_y, max=1)  # []
@@ -44,7 +48,10 @@ def verify_speculative_tokens_batched(
     target_probs: torch.Tensor,  # [B, N+1, V]
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
-    """Verify a batch and return the longest common committed prefix [B, C]."""
+    """Verify IDs [B, N] with draft [B, N, V] and target [B, N + 1, V].
+
+    Return the longest common committed prefix [B, C].
+    """
     num_draft_tokens = draft_tokens.shape[1]
     proposed_target_probs = torch.gather(
         target_probs[:, :num_draft_tokens],
@@ -108,7 +115,7 @@ def _truncate_kv_caches(
     kv_caches: DecoderCache | list[tuple[torch.Tensor, torch.Tensor]],
     cache_length: int,
 ) -> DecoderCache | list[tuple[torch.Tensor, torch.Tensor]]:
-    """Return cache views restricted to a shared logical sequence length."""
+    """Restrict cache views [B, num_kv_heads, K, d_head] to a logical length."""
     if isinstance(kv_caches, DecoderCache):
         rollback = kv_caches.position - cache_length
         if rollback < 0:
@@ -220,7 +227,10 @@ def generate_sampled_speculative(
     eos_token_id: int | None = None,
     num_speculative_token: int = 4,
 ) -> torch.Tensor:
-    """Generate one sequence through repeated uncached speculative rounds."""
+    """Generate from input_ids [S] through repeated uncached rounds.
+
+    Return prompt plus up to max_new_tokens IDs as [S + T].
+    """
     if max_new_tokens < 0:
         raise ValueError("max_new_tokens must be greater than or equal to 0")
     if num_speculative_token <= 0:
@@ -285,6 +295,9 @@ def generate_sampled_speculative_cached(
     num_speculative_token: int = 4,
 ) -> torch.Tensor:
     """Batched speculative decoding using each model's independent KV cache.
+
+    Input: input_ids [B, S]. Output: prompt plus up to max_new_tokens
+    IDs [B, S + T].
 
     Batch rows advance in lockstep so their rectangular KV-cache tensors keep
     one shared sequence length. A row with a longer accepted prefix is safely

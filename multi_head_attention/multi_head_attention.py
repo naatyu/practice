@@ -84,6 +84,12 @@ class MultiHeadAttention(nn.Module):
         use_cache: bool = False,
         position_offset: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        """Attend over x [B, Q, d_model].
+
+        Optional compact cache: (K, V), each
+        [B, num_kv_heads, K, d_head]. Output: [B, Q, d_model], plus
+        updated K/V when use_cache is true.
+        """
         B, query_len, d_model = x.shape
 
         # [B, query_len, d_model + 2 * num_kv_heads * d_head]

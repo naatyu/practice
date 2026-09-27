@@ -9,6 +9,7 @@ class LearnedPositionalEncoding(nn.Module):
         self.pos_table = nn.Embedding(max_seq_len, d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Add learned positions to x [B, S, d_model]; return the same shape."""
         # Check for un-allowed seq len
         seq_len = x.shape[-2]
         if seq_len > self.max_seq_len:

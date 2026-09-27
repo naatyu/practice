@@ -41,6 +41,12 @@ class TransformerBlock(nn.Module):
         use_cache: bool = False,
         position_offset: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        """Transform x [B, Q, d_model].
+
+        Optional per-layer cache: (K, V), each
+        [B, num_kv_heads, K, d_head]. Output has x's shape and, when
+        requested, an updated cache with the same leading dimensions.
+        """
         if use_cache:
             attn_output, updated_cache = self.attn(
                 self.norm1(x),

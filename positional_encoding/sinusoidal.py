@@ -25,6 +25,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         self.register_buffer("table", table, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Add sinusoidal positions to x [B, S, d_model]; return the same shape."""
         seq_len = x.shape[-2]
         if seq_len > self.max_seq_len:
             raise ValueError(

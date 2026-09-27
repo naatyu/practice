@@ -47,6 +47,7 @@ def generate_greedy(
     max_new_tokens: int = 256,
     eos_token_id: int | None = None,
 ) -> torch.Tensor:
+    """Generate from input_ids [B, S] with a KV cache; return [B, S + T]."""
     if max_new_tokens == 0:
         return input_ids
 

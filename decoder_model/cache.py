@@ -7,6 +7,7 @@ LayerKVCache = tuple[torch.Tensor, torch.Tensor]
 
 @dataclass
 class DecoderCache:
+    """Per-layer K/V pairs [B, num_kv_heads, K, d_head] and next position."""
     layers: list[LayerKVCache]
     # Cache length may be bounded, so position separately tracks the next
     # absolute token position used by RoPE.

@@ -4,6 +4,7 @@ import torch
 def apply_repetition_penalty(
     logits: torch.Tensor, input_ids: torch.Tensor, repetition_penalty: float
 ) -> torch.Tensor:
+    """Penalize history IDs [B, S] in logits [B, vocab_size]."""
     if repetition_penalty == 1:
         return logits
     elif not repetition_penalty >= 1:
@@ -29,7 +30,7 @@ def logits_to_probabilities(
     top_k: int | None = None,
     top_p: float | None = None,
 ) -> torch.Tensor:
-    """Convert logits into a probability distribution after sampling filters."""
+    """Filter logits [..., vocab_size] into probabilities of the same shape."""
     if temperature <= 0:
         raise ValueError(f"Temperature must be > 0 but got: {temperature}")
     vocab_size = logits.shape[-1]
@@ -81,6 +82,10 @@ def sample_next_token(
     top_k: int | None = None,
     top_p: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample from logits [B, vocab_size].
+
+    Return token IDs [B, 1] and probabilities [B, vocab_size].
+    """
     probabilities = logits_to_probabilities(
         logits,
         temperature=temperature,
@@ -104,6 +109,7 @@ def generate_sampled(
     generator: torch.Generator | None = None,
     repetition_penalty: float = 1.0,
 ) -> torch.Tensor:
+    """Sample from input_ids [B, S] with a KV cache; return [B, S + T]."""
     if max_new_tokens == 0:
         return input_ids
 

@@ -9,6 +9,13 @@ def naive_recurrent_linear_attention(
     *,
     output_final_state: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Compute recurrent linear attention.
+
+    Inputs:
+        q, k: [B, H, S, Dk]
+        v: [B, H, S, Dv]
+        initial_state (optional): [B, H, Dk, Dv]
+    """
 
     expected_state_shape = (*k.shape[:-2], k.shape[-1], v.shape[-1])
     if initial_state is None:

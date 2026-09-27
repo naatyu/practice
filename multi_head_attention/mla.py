@@ -5,6 +5,7 @@ from normalization import RMSNorm
 
 
 def precompute_freqs_cis(seq_len: int, base: int, head_dim: int) -> torch.Tensor:
+    """Return complex RoPE frequencies [S, d_rope / 2] for S=seq_len."""
     dim_positions = torch.arange(0, head_dim, 2)  # [head_dim / 2]
     token_positions = torch.arange(0, seq_len)  # [seq_len]
     freqs = 1 / (base ** (dim_positions / head_dim))  # [head_dim / 2]
@@ -16,6 +17,7 @@ def precompute_freqs_cis(seq_len: int, base: int, head_dim: int) -> torch.Tensor
 
 
 def apply_rope(x: torch.Tensor, freq_cis: torch.Tensor):
+    """Rotate x [B, S, H, d_rope] using frequencies [S, d_rope / 2]."""
     # This version for MLA expect [B, S, H, D] as input
     dtype = x.dtype
 
@@ -76,6 +78,10 @@ class MultiHeadLatentAttention(nn.Module):
         self.out = nn.Linear(self.n_heads * self.v_head_dim, self.d_model, bias=False)
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor):
+        """Process x [B, S, d_model] with RoPE frequencies [S, d_rope / 2].
+
+        Output: [B, S, d_model].
+        """
         # B = batch_size, S = sequence_length, D = model dimension, d = head dimension, H = number of heads
         batch_size, seq_len, _ = x.shape  # [B, S, D]
 
@@ -133,6 +139,7 @@ class MultiHeadLatentAttention(nn.Module):
 
     @torch.no_grad()
     def absorb_mla_weights(self) -> None:
+        """Build absorbed projection weights from the current MLA parameters."""
         if self.q_lora_rank != 0:
             raise NotImplementedError()
 
@@ -229,6 +236,10 @@ class MultiHeadLatentAttention(nn.Module):
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
     ) -> torch.Tensor:
+        """Process x [B, S, d_model] with frequencies [S, d_rope / 2].
+
+        Output: [B, S, d_model].
+        """
         assert self.wq_abs is not None
         assert self.wo_abs is not None
 

@@ -91,6 +91,7 @@ class ByteLevelBPE:
         pair: tuple[int, int],
         new_token_id: int,
     ) -> list[int]:
+        """Replace non-overlapping pair occurrences in a 1D token-ID list."""
         merged = []
         n = len(token_ids)
         i = 0
@@ -105,6 +106,7 @@ class ByteLevelBPE:
         return merged
 
     def train(self, text: str | Iterable[str]) -> None:
+        """Train on one string or an iterable of strings."""
         if self.merges:
             raise RuntimeError("Tokenizer has already been trained.")
 
@@ -149,6 +151,7 @@ class ByteLevelBPE:
             next_token_id += 1
 
     def encode(self, text: str) -> list[int]:
+        """Convert one string into a 1D list of token IDs."""
         # Pre-tokenization
         chunks = self._text_to_chunks(text)
 
@@ -172,6 +175,7 @@ class ByteLevelBPE:
         return [token_id for chunk in chunks for token_id in chunk]
 
     def decode(self, token_ids: list[int]) -> str:
+        """Convert a 1D list of token IDs into one string."""
         text_bytes = []
         for token_id in token_ids:
             if token_id in self.special_token_ids:
@@ -186,6 +190,7 @@ class ByteLevelBPE:
         return b"".join(text_bytes).decode("utf-8")
 
     def save(self, path: Path) -> None:
+        """Write the tokenizer to one filesystem path."""
         state = {
             "pattern": self.pattern,
             "vocab_size": self.vocab_size,
@@ -200,6 +205,7 @@ class ByteLevelBPE:
 
     @classmethod
     def load(cls, path: Path) -> "ByteLevelBPE":
+        """Load one tokenizer from a filesystem path."""
         with path.open("r", encoding="utf-8") as f:
             saved_state = json.load(f)
 

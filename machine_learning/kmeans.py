@@ -3,6 +3,10 @@ import torch
 
 # x = [N, D]; centroids = [K, D]
 def predict_naive(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
+    """Assign nearest centroids with loops.
+
+    Inputs: x [N, d_feature], centroids [K, d_feature]. Output: [N].
+    """
     clusters_attribution = []
     for n in x:
         best_distance = float("inf")
@@ -18,6 +22,10 @@ def predict_naive(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
 
 
 def predict(x: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
+    """Assign nearest centroids with matrix multiplication.
+
+    Inputs: x [N, d_feature], centroids [K, d_feature]. Output: [N].
+    """
     # Note: ||x - c||² = ||x||² + ||c||² - 2x·c
     x_norm = torch.sum(x**2, dim=-1, keepdim=True)  # [N, 1]
     c_norm = torch.sum(centroids**2, dim=-1).unsqueeze(

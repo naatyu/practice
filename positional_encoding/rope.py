@@ -36,6 +36,7 @@ class RotaryPositionalEncoding(nn.Module):
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, offset: int = 0
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Rotate q and k [B, H, S, d_head] from absolute position offset."""
         seq_len = q.shape[-2]
         if seq_len > self.max_seq_len:
             raise ValueError(
@@ -116,6 +117,7 @@ class RotaryPositionalEncodingComplex(nn.Module):
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, offset: int = 0
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Rotate q and k [B, H, S, d_head] with complex frequency pairs."""
         seq_len = q.shape[-2]
         if seq_len > self.max_seq_len:
             raise ValueError(

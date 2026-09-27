@@ -10,6 +10,14 @@ def naive_recurrent_delta_net(
     *,
     output_final_state: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Compute recurrent DeltaNet correction.
+
+    Inputs:
+        q, k: [B, H, S, Dk]
+        v: [B, H, S, Dv]
+        beta: [B, H, S]
+        initial_state (optional): [B, H, Dk, Dv]
+    """
     expected_state_shape = (*k.shape[:-2], k.shape[-1], v.shape[-1])
     if initial_state is None:
         initial_state = torch.zeros(

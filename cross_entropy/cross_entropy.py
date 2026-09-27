@@ -17,6 +17,11 @@ class CrossEntropy(nn.Module):
         self.ignore_index = ignore_index
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor):
+        """Compute tokenwise cross-entropy from logits.
+
+        Inputs: logits [B, S, vocab_size], targets [B, S].
+        Output: [B, S] for reduction='none', otherwise a scalar.
+        """
         max_logits = torch.max(logits, dim=-1, keepdim=True).values
         shifted_logits = logits - max_logits
 

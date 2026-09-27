@@ -10,6 +10,7 @@ class SwiGLU(nn.Module):
         self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Transform token features: input and output [B, S, d_model]."""
         x = self.up_proj(x)
         value, gate = torch.chunk(x, 2, dim=-1)
         gate = torch.nn.functional.silu(gate)

@@ -73,6 +73,12 @@ class DecoderModel(nn.Module):
         *,
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, DecoderCache]:
+        """Compute decoder logits for a token chunk.
+
+        Inputs: input_ids [B, S]; optional cache with per-layer K/V
+        [B, num_kv_heads, K, d_head] and an absolute next-token position.
+        Output: logits [B, S, vocab_size], plus updated cache if requested.
+        """
         if use_cache and kv_caches is not None and len(kv_caches) != len(self.blocks):
             raise ValueError(
                 "KV cache number of layers does not match the model number of layers."
