@@ -51,3 +51,57 @@ def naive_recurrent_delta_net(
     outputs = torch.stack(outputs, dim=-2)  # [B, H, S, Dv]
 
     return outputs, state if output_final_state else None
+
+
+def naive_recurrent_gated_delta_net(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    beta: torch.Tensor,
+    alpha: torch.Tensor,
+    initial_state: torch.Tensor | None = None,
+    *,
+    output_final_state: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Compute scalar-gated recurrent DeltaNet (exercise in progress).
+
+    Inputs:
+        q, k: [B, H, S, Dk]
+        v: [B, H, S, Dv]
+        beta, alpha: [B, H, S]
+        initial_state (optional): [B, H, Dk, Dv]
+    """
+    expected_state_shape = (*k.shape[:-2], k.shape[-1], v.shape[-1])
+    if initial_state is None:
+        initial_state = torch.zeros(
+            expected_state_shape, device=k.device, dtype=k.dtype
+        )  # [B, H , Dk, Dv]
+
+    if initial_state.shape != expected_state_shape:
+        raise ValueError(
+            "Expected state and k/v dimensions to match, got: "
+            f"S=[{initial_state.shape}], "
+            f"k=[{k.shape}], "
+            f"v=[{v.shape}]"
+        )
+
+    outputs = []
+    state = initial_state  # [B, H, Dk, Dv]
+    for t in range(k.shape[-2]):
+        q_t = q[..., t, :]  # [B, H, Dk]
+        k_t = k[..., t, :]  # [B, H, Dk]
+        v_t = v[..., t, :]  # [B, H, Dv]
+        beta_t = beta[..., t]  # [B, H]
+        alpha_t = alpha[..., t]  # [B, H]
+
+        state = alpha_t[..., None, None] * state  # [B, H, Dk, Dv]
+
+        v_t_pred = (k_t.unsqueeze(-2) @ state).squeeze(-2)  # [B, H, Dv]
+        error = v_t - v_t_pred  # [B, H, Dv]
+        correction = k_t.unsqueeze(-1) @ error.unsqueeze(-2)  # [B, H, Dk, Dv]
+        state = state + beta_t[..., None, None] * correction  # [B, H, Dk, Dv]
+        outputs.append((q_t.unsqueeze(-2) @ state).squeeze(-2))  # [B, H, Dk]
+
+    outputs = torch.stack(outputs, dim=-2)  # [B, H, S, Dk]
+
+    return outputs, state if output_final_state else None
