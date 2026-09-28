@@ -6,8 +6,9 @@ Completed through cached, batched speculative decoding. FlashAttention theory
 notes are complete, but its plain-PyTorch implementation is deferred. Local
 and sliding-window attention, including bounded-cache tests, has since been
 implemented. The active interview track is recurrent linear attention through
-an educational Kimi Delta Attention layer; resume with convolution-tail
-caching for correct split-sequence decoding. Multi-Head Latent Attention is
+an educational Kimi Delta Attention layer. Its fixed-size convolution and
+recurrent caches support split-sequence decoding; resume with paper-aligned
+log-space decay. Multi-Head Latent Attention is
 exploratory work in progress, not a completed, tested roadmap stage.
 
 ## Completed foundations
@@ -279,13 +280,11 @@ written; the implementation file remains intentionally empty.
   channel-wise KDA recurrence are implemented and tested.
 - The educational KDA layer has causal depthwise Q/K/V convolutions, direct
   sigmoid gates, per-head output RMSNorm, a learned output gate, and an output
-  projection; 10 focused KDA tests pass.
-- Next: cache the fixed-size Q/K/V convolution tails so split-sequence and
-  token-by-token calls match one full-sequence call. The recurrent matrix
-  state is already exposed but is not sufficient on its own.
-- Later: paper-aligned log-space decay, low-rank gates, and optional chunkwise
-  parallel training. See `linear_attention/README.md` for interview prompts and
-  `linear_attention/SOLUTIONS.md` for completed reasoning.
+  projection. Its cache holds the recurrent matrix and Q/K/V convolution tails;
+  full-sequence and split-sequence calls match. 17 focused KDA tests pass.
+- Next: paper-aligned log-space decay, then optional low-rank gate projections
+  and chunkwise parallel training. See `linear_attention/README.md` for
+  interview prompts and `linear_attention/SOLUTIONS.md` for completed reasoning.
 
 ### 23. Mixture of Experts
 

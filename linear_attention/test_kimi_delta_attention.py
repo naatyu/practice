@@ -13,7 +13,11 @@ def test_causal_depthwise_conv_preserves_sequence_and_channel_shapes() -> None:
     conv = CausalDepthwiseConv1d(3, kernel_size=4)
     x = torch.randn(2, 7, 3)
 
-    assert conv(x).shape == x.shape
+    output, tail = conv(x)
+
+    assert output.shape == x.shape
+    assert tail.shape == (2, 3, 3)
+    torch.testing.assert_close(tail, x[:, -3:, :])
 
 
 def test_causal_depthwise_conv_cannot_see_future_tokens() -> None:
@@ -23,7 +27,9 @@ def test_causal_depthwise_conv_cannot_see_future_tokens() -> None:
     changed_future = x.clone()
     changed_future[:, 4:, :] += 100
 
-    torch.testing.assert_close(conv(x)[:, :4], conv(changed_future)[:, :4])
+    output, _ = conv(x)
+    changed_output, _ = conv(changed_future)
+    torch.testing.assert_close(output[:, :4], changed_output[:, :4])
 
 
 def test_causal_depthwise_conv_keeps_channels_independent() -> None:
@@ -36,10 +42,74 @@ def test_causal_depthwise_conv_keeps_channels_independent() -> None:
 
     assert conv.conv.groups == channels
     unchanged_channels = [0, 2]
+    output, _ = conv(x)
+    changed_output, _ = conv(changed_one_channel)
     torch.testing.assert_close(
-        conv(x)[:, :, unchanged_channels],
-        conv(changed_one_channel)[:, :, unchanged_channels],
+        output[:, :, unchanged_channels],
+        changed_output[:, :, unchanged_channels],
     )
+
+
+@pytest.mark.parametrize("kernel_size", [1, 3, 4])
+def test_causal_depthwise_conv_split_calls_match_full_sequence(
+    kernel_size: int,
+) -> None:
+    torch.manual_seed(10)
+    conv = CausalDepthwiseConv1d(3, kernel_size=kernel_size)
+    x = torch.randn(2, 7, 3)
+
+    full_output, full_tail = conv(x)
+    first_output, first_tail = conv(x[:, :1])
+    second_output, second_tail = conv(x[:, 1:3], first_tail)
+    third_output, split_tail = conv(x[:, 3:], second_tail)
+
+    torch.testing.assert_close(
+        torch.cat((first_output, second_output, third_output), dim=1),
+        full_output,
+    )
+    torch.testing.assert_close(split_tail, full_tail)
+    assert split_tail.shape == (2, kernel_size - 1, 3)
+
+
+@pytest.mark.parametrize("kernel_size", [1, 3, 4])
+def test_kda_layer_split_calls_match_full_sequence(kernel_size: int) -> None:
+    torch.manual_seed(11)
+    layer = KimiDeltaAttention(d_model=12, num_heads=3, kernel_size=kernel_size)
+    x = torch.randn(2, 7, 12)
+
+    full_output, full_cache = layer(x, use_cache=True)
+    first_output, first_cache = layer(x[:, :1], use_cache=True)
+    second_output, second_cache = layer(x[:, 1:3], first_cache, use_cache=True)
+    third_output, split_cache = layer(x[:, 3:], second_cache, use_cache=True)
+
+    assert full_cache is not None
+    assert first_cache is not None
+    assert second_cache is not None
+    assert split_cache is not None
+    torch.testing.assert_close(
+        torch.cat((first_output, second_output, third_output), dim=1),
+        full_output,
+    )
+    for name in ("state", "q_tail", "k_tail", "v_tail"):
+        torch.testing.assert_close(
+            getattr(split_cache, name), getattr(full_cache, name)
+        )
+    assert split_cache.state.shape == (2, 3, 4, 4)
+    for tail in (split_cache.q_tail, split_cache.k_tail, split_cache.v_tail):
+        assert tail.shape == (2, kernel_size - 1, 12)
+
+
+def test_kda_layer_does_not_return_cache_when_disabled() -> None:
+    layer = KimiDeltaAttention(d_model=12, num_heads=3, kernel_size=3)
+    x = torch.randn(2, 4, 12)
+
+    _, prefix_cache = layer(x[:, :2], use_cache=True)
+    assert prefix_cache is not None
+
+    output, returned_cache = layer(x[:, 2:], prefix_cache, use_cache=False)
+
+    assert output.shape == (2, 2, 12)
+    assert returned_cache is None
 
 
 def test_kda_layer_passes_head_shaped_inputs_to_recurrence(monkeypatch) -> None:
@@ -85,7 +155,9 @@ def test_kda_layer_normalizes_each_head_independently(monkeypatch) -> None:
     layer = KimiDeltaAttention(d_model=4, num_heads=2, kernel_size=2)
     recurrent_output = torch.tensor([[[[3.0, 4.0]], [[1.0, 2.0]]]])
 
-    def fake_recurrence(q, k, v, beta, alpha, initial_state=None, *, output_final_state=False):
+    def fake_recurrence(
+        q, k, v, beta, alpha, initial_state=None, *, output_final_state=False
+    ):
         return recurrent_output, None
 
     monkeypatch.setattr(kda_module, "recurrent_kda", fake_recurrence)
@@ -103,14 +175,14 @@ def test_kda_layer_normalizes_each_head_independently(monkeypatch) -> None:
     assert first.shape == (1, 1, 4)
     assert second.shape == first.shape
     torch.testing.assert_close(normalized[0][:, 0], normalized[1][:, 0])
-    torch.testing.assert_close(
-        normalized[0][:, 0].square().mean(), torch.tensor(1.0)
-    )
+    torch.testing.assert_close(normalized[0][:, 0].square().mean(), torch.tensor(1.0))
 
 
 def test_kda_layer_output_gate_has_a_learned_projection() -> None:
     layer = KimiDeltaAttention(d_model=12, num_heads=3, kernel_size=3)
-    linear_layers = [module for module in layer.modules() if isinstance(module, torch.nn.Linear)]
+    linear_layers = [
+        module for module in layer.modules() if isinstance(module, torch.nn.Linear)
+    ]
 
     # QKV, alpha, beta, output projection, and at least one gate projection.
     assert len(linear_layers) >= 5
@@ -185,7 +257,9 @@ def test_split_sequence_matches_full_kda_recurrence() -> None:
         output_final_state=True,
     )
 
-    torch.testing.assert_close(torch.cat((prefix_output, suffix_output), -2), full_output)
+    torch.testing.assert_close(
+        torch.cat((prefix_output, suffix_output), -2), full_output
+    )
     torch.testing.assert_close(suffix_state, full_state)
 
 

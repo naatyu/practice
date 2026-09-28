@@ -164,10 +164,13 @@ work.
 
 The convolution introduces three additional fixed-size decode states:
 the recent projected Q/K/V inputs needed by the kernel. The recurrent matrix
-state alone is insufficient to resume a full layer exactly. Each fresh
-one-token call currently pads its Q/K/V inputs with zeros, so it loses the
-prefix convolution context. Keeping convolution logic outside the recurrent
-operator makes both pieces independently testable.
+state alone is insufficient to resume a full layer exactly. The `KDACache`
+holds that matrix plus separate Q/K/V tails, each `[B, K-1, d_model]`.
+The tails contain projected inputs *before* convolution and SiLU. Each call
+concatenates its tail with new projected inputs, applies a valid depthwise
+convolution, and saves the last `K-1` inputs as the next tail. A first call
+uses a zero tail. For `K=1`, the tail is empty. The cache is passed explicitly
+between calls rather than stored as mutable state in the module.
 
 Plain linear attention does not receive a convolution merely because KDA uses
 one. Full wrappers for intermediate architectures should include only the
@@ -189,20 +192,20 @@ components belonging to their canonical designs.
 batch items/heads/tokens, split-sequence continuation, optional final state,
 state shape validation, and gradients through Q, K, V, beta, and initial state.
 
-`test_kimi_delta_attention.py` has 10 passing tests covering channel-wise
+`test_kimi_delta_attention.py` has 17 passing tests covering channel-wise
 decay, equivalence to scalar-gated DeltaNet when channels share a gate,
 split-sequence recurrent continuation, gradients, causal depthwise convolution,
-layer input shapes, per-head RMSNorm, and the presence of a learned output
-gate. It does **not** yet prove full-layer split-sequence equivalence.
+layer input shapes, per-head RMSNorm, the learned output gate, and convolution
+and full-layer split-sequence equivalence for kernel widths 1, 3, and 4.
+The full-layer tests compare outputs and all four cache fields.
 
 ## Handoff: resume here
 
-The recurrent KDA core and educational full-sequence layer are implemented.
-The next interview question is: if a prefix is processed and its recurrent
-state passed into a second call for the next token, will the full layer match
-one call on the combined sequence? Why not when the convolution kernel is
-wider than one? The next implementation is Q/K/V convolution-tail caching,
-followed by a full-versus-split layer test.
+The recurrent KDA core, educational layer, and fixed-size decoding cache are
+implemented and tested. The next interview question is why the paper represents
+decay in log space instead of using the current direct sigmoid alpha gate.
+After that, implement the paper-aligned gate parameterization and consider
+low-rank gate projections.
 
 Workflow:
 
@@ -210,5 +213,5 @@ Workflow:
 2. The interviewer reviews without replacing the learner's code unnecessarily.
 3. The interviewer writes focused tests after the implementation is corrected.
 4. Preserve the learner's implementations unless asked to change them.
-5. After decoding continuity, revisit log-space decay and optional low-rank
-   gates; keep chunkwise training algorithms optional.
+5. Revisit log-space decay and optional low-rank gates; keep chunkwise
+   training algorithms optional.

@@ -128,7 +128,7 @@ grouped value attention can be added later.
 4. Why is the persistent decoding state independent of sequence length?
 5. How does its memory cost compare with a growing KV cache?
 
-## Exercise 5: Educational KDA layer
+## Exercise 5: Educational KDA layer (in progress)
 
 Wrap the verified recurrent operator in an `nn.Module` that follows the Kimi
 Linear layer design while remaining readable.
@@ -149,10 +149,10 @@ Required components:
 - Recurrent matrix-state caching for decoding.
 - Q/K/V convolution-tail caching for decoding.
 
-The short convolution must be causal. In the educational implementation, use
-explicit left padding for full sequences so future tokens cannot leak into
-earlier outputs. Token-by-token decoding should retain only the convolution
-history required by its kernel size.
+The short convolution must be causal. On a first call, a zero-filled tail of
+length `kernel_size - 1` provides left padding. Later calls reuse the saved
+projected Q/K/V inputs from the previous call. The layer cache carries those
+three fixed-size tails and the recurrent matrix state.
 
 ### Discussion questions
 
@@ -183,17 +183,13 @@ Completed:
   separate Q/K/V convolutions, SiLU, Q/K L2 normalization, direct sigmoid
   alpha and beta gates, head-wise output RMSNorm, learned sigmoid output gate,
   and final output projection.
-- Recurrent-state input/output is wired through the layer. The focused KDA test
-  file currently has 10 passing tests.
+- A `KDACache` carries the recurrent state and separate projected Q/K/V tails.
+  Full-sequence and split-sequence calls match for convolution kernel sizes
+  1, 3, and 4; the focused KDA test file has 17 passing tests.
 
-Resume with **Exercise 5: decoding continuity**. The layer carries the
-`[B, H, Dk, Dv]` recurrent state, but its Q/K/V convolutions currently pad
-each call independently. Ask whether processing a prefix and then one token
-can match a single full-sequence call when the convolution kernel is wider
-than one. Then design and test fixed-size Q/K/V convolution-tail caches.
-
-After that, revisit the paper-aligned log-space decay parameterization and
-low-rank gate projections. The current direct sigmoid gates are an intentional
-first working version, not a claim of exact paper parity. The learner writes
+Resume with **Exercise 5: paper-aligned decay**. The current direct sigmoid
+alpha gate is an intentional first working version. Study why KDA represents
+decay in log space, then implement and test the paper-aligned gate
+parameterization. Low-rank gate projections can follow. The learner writes
 the implementation; the interviewer writes tests and asks one focused
 conceptual question at a time.
