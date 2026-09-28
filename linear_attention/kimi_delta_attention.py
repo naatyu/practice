@@ -20,7 +20,11 @@ class CausalDepthwiseConv1d(nn.Module):
     def forward(
         self, x: torch.Tensor, tail: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Apply left-padded Conv1d to x [B, S, C] -> [B, S, C]."""
+        """Return (output [B, S, C], new_tail [B, K-1, C]).
+
+        The optional tail holds the previous K-1 projected tokens; a missing
+        tail is treated as zeros for a fresh sequence.
+        """
         history_size = self.conv.kernel_size[0] - 1
 
         if tail is None:
@@ -120,7 +124,7 @@ class KimiDeltaAttention(nn.Module):
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out_proj = nn.Linear(d_model, d_model)
         self.beta = nn.Linear(d_model, num_heads)
-        self.alpha = nn.Linear(d_model, d_model)
+        self.decay_input_proj = nn.Linear(d_model, d_model)
         self.gate = nn.Linear(d_model, d_model)
 
         self.q_conv = CausalDepthwiseConv1d(d_model, kernel_size=kernel_size)
@@ -128,6 +132,11 @@ class KimiDeltaAttention(nn.Module):
         self.v_conv = CausalDepthwiseConv1d(d_model, kernel_size=kernel_size)
 
         self.norm = nn.RMSNorm(self.head_dim)
+
+        self.log_decay_rate = nn.Parameter(torch.zeros(self.num_heads))
+        self.decay_input_bias = nn.Parameter(
+            torch.zeros(self.num_heads, self.head_dim)
+        )
 
     def forward(
         self,
@@ -138,9 +147,17 @@ class KimiDeltaAttention(nn.Module):
     ) -> tuple[torch.Tensor, KDACache | None]:
         B, S, _ = x.shape
 
-        alpha = nn.functional.sigmoid(self.alpha(x))  # [B, S, d_model]
-        alpha = alpha.view(B, S, self.num_heads, self.head_dim)  # [B, S, H, Dk]
-        alpha = alpha.transpose(1, 2)  # [B, H, S, Dk]
+        decay_input = self.decay_input_proj(x)  # [B, S, d_model]
+        decay_input = decay_input.view(
+            B, S, self.num_heads, self.head_dim
+        )  # [B, S, H, Dk]
+        log_retention = -torch.exp(
+            self.log_decay_rate[None, None, :, None]
+        ) * nn.functional.softplus(
+            decay_input + self.decay_input_bias[None, None, :, :]
+        )  # [B, S, H, Dk]
+        retention = torch.exp(log_retention)  # [B, S, H, Dk]
+        retention = retention.transpose(1, 2)  # [B, H, S, Dk]
 
         beta = nn.functional.sigmoid(self.beta(x))  # [B, S, H]
         beta = beta.transpose(1, 2)  # [B, H, S]
@@ -168,7 +185,7 @@ class KimiDeltaAttention(nn.Module):
             k_norm,
             v,
             beta,
-            alpha,
+            retention,
             initial_state=None if cache is None else cache.state,
             output_final_state=use_cache,
         )  # [B, H, S, Dk]

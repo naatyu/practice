@@ -188,6 +188,21 @@ def test_kda_layer_output_gate_has_a_learned_projection() -> None:
     assert len(linear_layers) >= 5
 
 
+def test_kda_layer_log_decay_parameters_receive_finite_gradients() -> None:
+    torch.manual_seed(12)
+    layer = KimiDeltaAttention(d_model=8, num_heads=2, kernel_size=3)
+    x = torch.randn(2, 4, 8, requires_grad=True)
+
+    output, cache = layer(x, use_cache=True)
+    assert cache is not None
+    (output.square().sum() + cache.state.square().sum()).backward()
+
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    for name, parameter in layer.named_parameters():
+        assert parameter.grad is not None, f"No gradient for {name}"
+        assert torch.isfinite(parameter.grad).all(), f"Nonfinite gradient for {name}"
+
+
 def test_channelwise_decay_and_correction_affect_distinct_state_rows() -> None:
     q = torch.tensor([[[[0.0, 1.0]]]])
     k = torch.tensor([[[[1.0, 0.0]]]])  # Normalized key.
