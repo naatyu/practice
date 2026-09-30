@@ -158,9 +158,26 @@ head's `Dv` features *before* merging heads; normalizing the merged
 projected from the layer input then attenuates features of the merged output,
 followed by the final output projection. This output gate is separate from
 alpha (memory decay) and beta (correction strength). The educational layer
-currently uses `Dk = Dv = d_model/H`, a direct sigmoid alpha projection, and
-a full-rank output gate; the paper's gate parameterizations remain future
-work.
+currently uses `Dk = Dv = d_model/H` and a full-rank output gate.
+
+The retention gate is now parameterized in log space. A full-rank projection
+of the layer input produces a channel-wise decay input. A learned per-head
+`log_decay_rate` becomes a positive rate after exponentiation; softplus of
+the projected input plus a learned per-channel bias is also positive. Their
+negative product is `log_retention <= 0`, so exponentiating produces a valid
+retention value in `(0, 1]`. The rate and bias control how quickly different
+heads and channels forget. The projection has no bias because its bias would
+be redundant with the explicit per-channel decay-input bias.
+
+For an initial positive decay step `dt`, inverse-softplus sets the bias to
+`log(expm1(dt))`, so softplus recovers `dt` when the projected input is zero.
+Steps are sampled log-uniformly from `[0.001, 0.1]` to cover different memory
+timescales. `log_decay_rate` starts at zero (rate one). The layer's
+`reset_parameters()` initializes only its direct decay parameters. It can be
+called again after a meta-device module is materialized with `to_empty`;
+child modules must be initialized separately. The reference uses additional
+per-head rate initialization and low-rank projections, which remain optional
+follow-up work.
 
 The convolution introduces three additional fixed-size decode states:
 the recent projected Q/K/V inputs needed by the kernel. The recurrent matrix
@@ -192,20 +209,23 @@ components belonging to their canonical designs.
 batch items/heads/tokens, split-sequence continuation, optional final state,
 state shape validation, and gradients through Q, K, V, beta, and initial state.
 
-`test_kimi_delta_attention.py` has 17 passing tests covering channel-wise
+`test_kimi_delta_attention.py` has 21 passing tests covering channel-wise
 decay, equivalence to scalar-gated DeltaNet when channels share a gate,
 split-sequence recurrent continuation, gradients, causal depthwise convolution,
 layer input shapes, per-head RMSNorm, the learned output gate, and convolution
 and full-layer split-sequence equivalence for kernel widths 1, 3, and 4.
-The full-layer tests compare outputs and all four cache fields.
+The full-layer tests compare outputs and all four cache fields. Controlled
+gate values, decay-parameter gradients, initialization range, and
+meta-device materialization are also tested.
 
 ## Handoff: resume here
 
-The recurrent KDA core, educational layer, and fixed-size decoding cache are
-implemented and tested. The next interview question is why the paper represents
-decay in log space instead of using the current direct sigmoid alpha gate.
-After that, implement the paper-aligned gate parameterization and consider
-low-rank gate projections.
+The recurrent KDA core, educational layer, fixed-size decoding cache, and
+log-space decay initialization are implemented and tested. Next, compare the
+educational full-rank decay and output-gate projections with the reference's
+low-rank versions and decide whether to implement them. The reference also
+initializes positive per-head decay rates differently; this implementation
+currently starts every rate at one.
 
 Workflow:
 
@@ -213,5 +233,5 @@ Workflow:
 2. The interviewer reviews without replacing the learner's code unnecessarily.
 3. The interviewer writes focused tests after the implementation is corrected.
 4. Preserve the learner's implementations unless asked to change them.
-5. Revisit log-space decay and optional low-rank gates; keep chunkwise
-   training algorithms optional.
+5. Consider optional low-rank gates and per-head rate initialization; keep
+   chunkwise training algorithms optional.

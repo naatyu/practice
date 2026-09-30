@@ -180,16 +180,21 @@ Completed:
 - Causal depthwise short convolution and its shape, causality, and
   channel-independence tests.
 - An educational `KimiDeltaAttention` layer with fused QKV projection,
-  separate Q/K/V convolutions, SiLU, Q/K L2 normalization, direct sigmoid
-  alpha and beta gates, head-wise output RMSNorm, learned sigmoid output gate,
-  and final output projection.
+  separate Q/K/V convolutions, SiLU, Q/K L2 normalization, log-space
+  channel-wise retention, a sigmoid beta gate, head-wise output RMSNorm,
+  learned sigmoid output gate, and final output projection.
 - A `KDACache` carries the recurrent state and separate projected Q/K/V tails.
   Full-sequence and split-sequence calls match for convolution kernel sizes
-  1, 3, and 4; the focused KDA test file has 17 passing tests.
+  1, 3, and 4.
+- The decay input bias is initialized from log-uniform positive steps in
+  `[0.001, 0.1]` via inverse-softplus. `reset_parameters()` initializes only
+  this layer's direct decay parameters and supports reinitialization after
+  meta-device materialization. The focused KDA test file has 21 passing tests.
 
-Resume with **Exercise 5: paper-aligned decay**. The current direct sigmoid
-alpha gate is an intentional first working version. Study why KDA represents
-decay in log space, then implement and test the paper-aligned gate
-parameterization. Low-rank gate projections can follow. The learner writes
+Resume with **Exercise 5: parameterization review**. The log-space gate and
+initialization now work, but this educational layer still uses a full-rank
+decay projection and initializes the per-head log decay rate to zero. Compare
+those choices with the reference's low-rank projections and rate
+initialization before deciding whether to implement them. The learner writes
 the implementation; the interviewer writes tests and asks one focused
 conceptual question at a time.

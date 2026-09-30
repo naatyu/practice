@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 
 import torch
 from torch import nn
@@ -124,7 +125,7 @@ class KimiDeltaAttention(nn.Module):
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out_proj = nn.Linear(d_model, d_model)
         self.beta = nn.Linear(d_model, num_heads)
-        self.decay_input_proj = nn.Linear(d_model, d_model)
+        self.decay_input_proj = nn.Linear(d_model, d_model, bias=False)
         self.gate = nn.Linear(d_model, d_model)
 
         self.q_conv = CausalDepthwiseConv1d(d_model, kernel_size=kernel_size)
@@ -133,10 +134,19 @@ class KimiDeltaAttention(nn.Module):
 
         self.norm = nn.RMSNorm(self.head_dim)
 
-        self.log_decay_rate = nn.Parameter(torch.zeros(self.num_heads))
-        self.decay_input_bias = nn.Parameter(
-            torch.zeros(self.num_heads, self.head_dim)
-        )
+        self.log_decay_rate = nn.Parameter(torch.empty(self.num_heads))
+        self.decay_input_bias = nn.Parameter(torch.empty(self.num_heads, self.head_dim))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialize this module's own decay parameters, not its child layers."""
+        with torch.no_grad():
+            self.log_decay_rate.zero_()
+            log_dt = torch.empty_like(self.decay_input_bias).uniform_(
+                math.log(1e-3), math.log(1e-1)
+            )
+            dt = log_dt.exp()
+            self.decay_input_bias.copy_(torch.log(torch.expm1(dt)))
 
     def forward(
         self,

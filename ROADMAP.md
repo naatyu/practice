@@ -7,8 +7,8 @@ notes are complete, but its plain-PyTorch implementation is deferred. Local
 and sliding-window attention, including bounded-cache tests, has since been
 implemented. The active interview track is recurrent linear attention through
 an educational Kimi Delta Attention layer. Its fixed-size convolution and
-recurrent caches support split-sequence decoding; resume with paper-aligned
-log-space decay. Multi-Head Latent Attention is
+recurrent caches support split-sequence decoding, and its log-space retention
+gate is implemented; resume with parameterization review. Multi-Head Latent Attention is
 exploratory work in progress, not a completed, tested roadmap stage.
 
 ## Completed foundations
@@ -278,12 +278,15 @@ written; the implementation file remains intentionally empty.
 
 - Plain recurrent linear attention, DeltaNet, scalar-gated DeltaNet, and the
   channel-wise KDA recurrence are implemented and tested.
-- The educational KDA layer has causal depthwise Q/K/V convolutions, direct
-  sigmoid gates, per-head output RMSNorm, a learned output gate, and an output
-  projection. Its cache holds the recurrent matrix and Q/K/V convolution tails;
-  full-sequence and split-sequence calls match. 17 focused KDA tests pass.
-- Next: paper-aligned log-space decay, then optional low-rank gate projections
-  and chunkwise parallel training. See `linear_attention/README.md` for
+- The educational KDA layer has causal depthwise Q/K/V convolutions,
+  log-space channel-wise retention, a sigmoid beta gate, per-head output
+  RMSNorm, a learned output gate, and an output projection. Its cache holds
+  the recurrent matrix and Q/K/V convolution tails; full-sequence and
+  split-sequence calls match. Log-uniform decay-step initialization and
+  meta-device reinitialization are tested. 21 focused KDA tests pass.
+- Next: compare per-head rate initialization and optional low-rank gate
+  projections with the reference; keep chunkwise parallel training optional.
+  See `linear_attention/README.md` for
   interview prompts and `linear_attention/SOLUTIONS.md` for completed reasoning.
 
 ### 23. Mixture of Experts

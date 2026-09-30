@@ -203,6 +203,68 @@ def test_kda_layer_log_decay_parameters_receive_finite_gradients() -> None:
         assert torch.isfinite(parameter.grad).all(), f"Nonfinite gradient for {name}"
 
 
+def test_kda_layer_log_decay_gate_matches_controlled_values(monkeypatch) -> None:
+    import linear_attention.kimi_delta_attention as kda_module
+
+    layer = KimiDeltaAttention(d_model=4, num_heads=2, kernel_size=2)
+    bias = torch.tensor([[-2.0, 0.0], [1.0, 2.0]])
+    rates = torch.tensor([1.0, 2.0])
+    with torch.no_grad():
+        layer.decay_input_proj.weight.zero_()
+        layer.log_decay_rate.copy_(rates.log())
+        layer.decay_input_bias.copy_(bias)
+
+    captured = {}
+
+    def capture_recurrence(q, k, v, beta, alpha, initial_state=None, *, output_final_state=False):
+        captured["retention"] = alpha
+        return torch.zeros_like(v), None
+
+    monkeypatch.setattr(kda_module, "recurrent_kda", capture_recurrence)
+    layer(torch.randn(2, 3, 4))
+
+    expected = torch.exp(-rates[:, None] * torch.nn.functional.softplus(bias))
+    expected = expected[None, :, None, :].expand(2, 2, 3, 2)
+    torch.testing.assert_close(captured["retention"], expected)
+
+
+def test_kda_layer_reset_initializes_only_own_decay_parameters() -> None:
+    torch.manual_seed(13)
+    layer = KimiDeltaAttention(d_model=8, num_heads=2, kernel_size=3)
+    qkv_weight = layer.qkv.weight.detach().clone()
+
+    with torch.no_grad():
+        layer.log_decay_rate.fill_(3.0)
+        layer.decay_input_bias.zero_()
+    layer.reset_parameters()
+
+    torch.testing.assert_close(layer.log_decay_rate, torch.zeros(2))
+    dt = torch.nn.functional.softplus(layer.decay_input_bias)
+    assert ((1e-3 <= dt) & (dt <= 1e-1)).all()
+    torch.testing.assert_close(layer.qkv.weight, qkv_weight)
+
+
+def test_kda_layer_can_be_initialized_after_meta_materialization() -> None:
+    with torch.device("meta"):
+        layer = KimiDeltaAttention(d_model=8, num_heads=2, kernel_size=3)
+    assert all(parameter.is_meta for parameter in layer.parameters())
+
+    layer.to_empty(device="cpu")
+    layer.apply(
+        lambda module: module.reset_parameters()
+        if hasattr(module, "reset_parameters")
+        else None
+    )
+
+    assert all(torch.isfinite(parameter).all() for parameter in layer.parameters())
+    dt = torch.nn.functional.softplus(layer.decay_input_bias)
+    assert ((1e-3 <= dt) & (dt <= 1e-1)).all()
+    output, cache = layer(torch.randn(1, 2, 8), use_cache=True)
+    assert cache is not None
+    assert torch.isfinite(output).all()
+    assert torch.isfinite(cache.state).all()
+
+
 def test_channelwise_decay_and_correction_affect_distinct_state_rows() -> None:
     q = torch.tensor([[[[0.0, 1.0]]]])
     k = torch.tensor([[[[1.0, 0.0]]]])  # Normalized key.
