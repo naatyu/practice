@@ -8,8 +8,9 @@ and sliding-window attention, including bounded-cache tests, has since been
 implemented. The active interview track is recurrent linear attention through
 an educational Kimi Delta Attention layer. Its fixed-size convolution and
 recurrent caches support split-sequence decoding, and its log-space retention
-gate is implemented; resume with parameterization review. Multi-Head Latent Attention is
-exploratory work in progress, not a completed, tested roadmap stage.
+gate and low-rank projections are implemented. Resume with the chunkwise KDA
+study. Multi-Head Latent Attention is exploratory work in progress, not a
+completed, tested roadmap stage.
 
 ## Completed foundations
 
@@ -286,8 +287,10 @@ written; the implementation file remains intentionally empty.
   meta-device reinitialization are tested. The decay projection now has a
   `d_model -> head_dim -> d_model` bottleneck, as does the output gate; 22
   focused KDA tests pass.
-- Next: initialize per-head rates from the reference's positive range, then
-  study chunkwise parallel training and assess implementation difficulty.
+- Per-head positive decay rates now start uniformly in `[1, 16]` before being
+  stored in log space.
+- Next: study chunkwise parallel KDA, compare it with a simpler chunked
+  recurrence, and assess implementation difficulty.
   See `linear_attention/README.md` for
   interview prompts and `linear_attention/SOLUTIONS.md` for completed reasoning.
 

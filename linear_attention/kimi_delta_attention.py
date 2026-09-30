@@ -174,7 +174,8 @@ class KimiDeltaAttention(nn.Module):
     def reset_parameters(self) -> None:
         """Initialize this module's own decay parameters, not its child layers."""
         with torch.no_grad():
-            self.log_decay_rate.zero_()
+            self.log_decay_rate.uniform_(1.0, 16.0)
+            self.log_decay_rate.log_()
             log_dt = torch.empty_like(self.decay_input_bias).uniform_(
                 math.log(1e-3), math.log(1e-1)
             )

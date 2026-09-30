@@ -264,7 +264,8 @@ def test_kda_layer_reset_initializes_only_own_decay_parameters() -> None:
         layer.decay_input_bias.zero_()
     layer.reset_parameters()
 
-    torch.testing.assert_close(layer.log_decay_rate, torch.zeros(2))
+    rates = layer.log_decay_rate.exp()
+    assert ((1.0 <= rates) & (rates <= 16.0)).all()
     dt = torch.nn.functional.softplus(layer.decay_input_bias)
     assert ((1e-3 <= dt) & (dt <= 1e-1)).all()
     torch.testing.assert_close(layer.qkv.weight, qkv_weight)
@@ -283,6 +284,8 @@ def test_kda_layer_can_be_initialized_after_meta_materialization() -> None:
     )
 
     assert all(torch.isfinite(parameter).all() for parameter in layer.parameters())
+    rates = layer.log_decay_rate.exp()
+    assert ((1.0 <= rates) & (rates <= 16.0)).all()
     dt = torch.nn.functional.softplus(layer.decay_input_bias)
     assert ((1e-3 <= dt) & (dt <= 1e-1)).all()
     output, cache = layer(torch.randn(1, 2, 8), use_cache=True)

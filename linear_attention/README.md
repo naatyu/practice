@@ -165,11 +165,11 @@ three fixed-size tails and the recurrent matrix state.
 7. Why does Kimi Linear retain periodic full-attention layers rather than
    using only KDA?
 
-## Optional Exercise 6: Chunkwise parallel KDA
+## Exercise 6: Chunkwise parallel KDA (study active)
 
-Only after the recurrent implementation and gradients are well tested, study
-the chunkwise WY formulation used for parallel training. This is optional: a
-correct recurrent implementation is the target of the educational track.
+Study the chunkwise WY formulation used for parallel training, compare it with
+the recurrent reference, and assess implementation cost. Implementing the
+parallel form remains a decision after the study.
 
 ## Current checkpoint
 
@@ -193,13 +193,13 @@ Completed:
 - The decay input projection now uses a `d_model -> head_dim -> d_model`
   bottleneck with no biases or intermediate activation. The output gate uses
   the same bottleneck, with a bias only in its final projection so each output
-  feature can learn a default gate value. The focused KDA test file has 22
-  passing tests.
+  feature can learn a default gate value.
+- Each head's positive decay rate is sampled uniformly from `[1, 16]`, then
+  stored as its logarithm. The focused KDA test file has 22 passing tests.
 
-Resume with **Exercise 5: per-head rate initialization**. Initialize the
-positive rates from the reference's `[1, 16]` range instead of starting every
-rate at one, while keeping the existing channel-wise decay-step bias
-initialization. Then study the chunkwise algorithm and decide whether an
-educational implementation is worthwhile. The learner writes the
-implementation; the interviewer writes tests and asks one focused conceptual
-question at a time.
+Resume with **Exercise 6: chunkwise KDA study**. Explain how a chunk can
+compute its local outputs in parallel while carrying one matrix state between
+chunks. Compare the paper's chunkwise algorithm with a simpler educational
+chunked recurrence, then decide whether implementing the parallel form is
+worthwhile. The learner writes implementations; the interviewer writes tests
+and asks one focused conceptual question at a time.

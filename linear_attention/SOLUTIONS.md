@@ -177,12 +177,15 @@ be redundant with the explicit per-channel decay-input bias.
 For an initial positive decay step `dt`, inverse-softplus sets the bias to
 `log(expm1(dt))`, so softplus recovers `dt` when the projected input is zero.
 Steps are sampled log-uniformly from `[0.001, 0.1]` to cover different memory
-timescales. `log_decay_rate` starts at zero (rate one). The layer's
-`reset_parameters()` initializes only its direct decay parameters. It can be
-called again after a meta-device module is materialized with `to_empty`;
-child modules must be initialized separately. The reference uses additional
-per-head rate initialization, which is the next exercise. The low-rank
-output-gate projection is now implemented.
+timescales. Each head's positive rate is sampled uniformly from `[1, 16]`
+and its logarithm is stored in `log_decay_rate`. Sampling the logarithm
+uniformly would instead make the positive rates log-uniform, favoring smaller
+rates. The rate range is a reference initialization choice, not a requirement
+of the recurrence. The layer's `reset_parameters()` initializes only its
+direct decay parameters. It can be called again after a meta-device module is
+materialized with `to_empty`;
+child modules must be initialized separately. The low-rank decay and
+output-gate projections are also implemented.
 
 The convolution introduces three additional fixed-size decode states:
 the recent projected Q/K/V inputs needed by the kernel. The recurrent matrix
@@ -226,12 +229,11 @@ output-gate baseline are also tested.
 
 ## Handoff: resume here
 
-The recurrent KDA core, educational layer, fixed-size decoding cache, and
-log-space decay initialization, and low-rank decay and output-gate projections
-are implemented and tested. Next, initialize positive per-head decay rates
-from the reference's range. This implementation currently starts every rate
-at one. Afterward, study chunkwise KDA and assess an educational
-implementation.
+The recurrent KDA core, educational layer, fixed-size decoding cache,
+log-space decay initialization, per-head rate initialization, and low-rank
+decay and output-gate projections are implemented and tested. Next, study
+chunkwise KDA and assess whether a parallel educational implementation is
+worthwhile.
 
 Workflow:
 
