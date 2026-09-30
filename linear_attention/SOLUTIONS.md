@@ -158,10 +158,15 @@ head's `Dv` features *before* merging heads; normalizing the merged
 projected from the layer input then attenuates features of the merged output,
 followed by the final output projection. This output gate is separate from
 alpha (memory decay) and beta (correction strength). The educational layer
-currently uses `Dk = Dv = d_model/H` and a full-rank output gate.
+currently uses `Dk = Dv = d_model/H`. Its output-gate projection has a
+`d_model -> head_dim -> d_model` bottleneck: the first linear layer has no
+bias, while the final bias lets each feature learn a default sigmoid gate
+value when the bottleneck output is zero.
 
-The retention gate is now parameterized in log space. A full-rank projection
-of the layer input produces a channel-wise decay input. A learned per-head
+The retention gate is now parameterized in log space. A two-layer projection
+maps `d_model -> head_dim -> d_model` to produce a channel-wise decay input.
+With no activation between the layers, its combined linear map has rank at
+most `head_dim`; it still produces a value for every key channel. A learned per-head
 `log_decay_rate` becomes a positive rate after exponentiation; softplus of
 the projected input plus a learned per-channel bias is also positive. Their
 negative product is `log_retention <= 0`, so exponentiating produces a valid
@@ -176,8 +181,8 @@ timescales. `log_decay_rate` starts at zero (rate one). The layer's
 `reset_parameters()` initializes only its direct decay parameters. It can be
 called again after a meta-device module is materialized with `to_empty`;
 child modules must be initialized separately. The reference uses additional
-per-head rate initialization and low-rank projections, which remain optional
-follow-up work.
+per-head rate initialization, which is the next exercise. The low-rank
+output-gate projection is now implemented.
 
 The convolution introduces three additional fixed-size decode states:
 the recent projected Q/K/V inputs needed by the kernel. The recurrent matrix
@@ -209,23 +214,24 @@ components belonging to their canonical designs.
 batch items/heads/tokens, split-sequence continuation, optional final state,
 state shape validation, and gradients through Q, K, V, beta, and initial state.
 
-`test_kimi_delta_attention.py` has 21 passing tests covering channel-wise
+`test_kimi_delta_attention.py` has 22 passing tests covering channel-wise
 decay, equivalence to scalar-gated DeltaNet when channels share a gate,
 split-sequence recurrent continuation, gradients, causal depthwise convolution,
 layer input shapes, per-head RMSNorm, the learned output gate, and convolution
 and full-layer split-sequence equivalence for kernel widths 1, 3, and 4.
 The full-layer tests compare outputs and all four cache fields. Controlled
-gate values, decay-parameter gradients, initialization range, and
-meta-device materialization are also tested.
+gate values, decay-parameter gradients, initialization range,
+meta-device materialization, both projection bottlenecks, and the learned
+output-gate baseline are also tested.
 
 ## Handoff: resume here
 
 The recurrent KDA core, educational layer, fixed-size decoding cache, and
-log-space decay initialization are implemented and tested. Next, compare the
-educational full-rank decay and output-gate projections with the reference's
-low-rank versions and decide whether to implement them. The reference also
-initializes positive per-head decay rates differently; this implementation
-currently starts every rate at one.
+log-space decay initialization, and low-rank decay and output-gate projections
+are implemented and tested. Next, initialize positive per-head decay rates
+from the reference's range. This implementation currently starts every rate
+at one. Afterward, study chunkwise KDA and assess an educational
+implementation.
 
 Workflow:
 

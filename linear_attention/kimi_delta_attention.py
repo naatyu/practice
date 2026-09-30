@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import torch
 from torch import nn
@@ -106,6 +106,31 @@ class KDACache:
 
 
 class KimiDeltaAttention(nn.Module):
+    """Educational KDA layer with a fixed-size recurrent memory.
+
+    Q, K, and V are projected, mixed with separate causal short convolutions,
+    and split into heads. The matrix state maps keys to predicted values.
+
+    For each token and key channel, retention is
+    ``exp(-exp(log_decay_rate) * softplus(decay_input + decay_input_bias))``.
+    ``log_decay_rate`` sets one overall forgetting speed per head: increasing
+    it lowers retention. ``decay_input_bias`` sets a baseline per key channel:
+    increasing it also lowers retention. ``decay_input_proj(x)`` makes that
+    channel's retention depend on the current token. Retention scales each
+    row of the old state before the current key predicts a value: near one
+    preserves that row, while near zero forgets it.
+
+    ``beta = sigmoid(beta(x))`` sets the write strength per token and head.
+    The layer writes the beta-scaled difference between the desired value and
+    the decayed state's prediction along the current normalized key, then
+    reads the updated state with the query. Beta near zero barely changes the
+    memory; beta near one applies nearly the full correction. The output has
+    its own learned sigmoid gate; it does not control retention or writing.
+
+    ``KDACache`` carries the matrix state and the projected Q/K/V inputs needed
+    by the convolutions, so later calls continue the same sequence.
+    """
+
     def __init__(self, d_model: int, num_heads: int, kernel_size: int):
         # C heck num heads
         if num_heads <= 0:
@@ -125,8 +150,16 @@ class KimiDeltaAttention(nn.Module):
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out_proj = nn.Linear(d_model, d_model)
         self.beta = nn.Linear(d_model, num_heads)
-        self.decay_input_proj = nn.Linear(d_model, d_model, bias=False)
-        self.gate = nn.Linear(d_model, d_model)
+        self.decay_input_proj = nn.Sequential(
+            nn.Linear(d_model, self.head_dim, bias=False),
+            nn.Linear(self.head_dim, d_model, bias=False),
+        )
+        self.output_gate = nn.Sequential(
+            nn.Linear(d_model, self.head_dim, bias=False),
+            nn.Linear(
+                self.head_dim, d_model
+            ),  # Use bias for learnable default gate value
+        )
 
         self.q_conv = CausalDepthwiseConv1d(d_model, kernel_size=kernel_size)
         self.k_conv = CausalDepthwiseConv1d(d_model, kernel_size=kernel_size)
@@ -203,7 +236,7 @@ class KimiDeltaAttention(nn.Module):
         output = self.norm(output)
         output = output.transpose(1, 2)  # [B, S, H, Dk]
         output = output.contiguous().view(B, S, self.d_model)  # [B, S, d_model]
-        output = nn.functional.sigmoid(self.gate(x)) * output  # [B, S, d_model]
+        output = nn.functional.sigmoid(self.output_gate(x)) * output  # [B, S, d_model]
         output = self.out_proj(output)  # [B, S, d_model]
 
         if use_cache:

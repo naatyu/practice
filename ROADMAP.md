@@ -283,9 +283,11 @@ written; the implementation file remains intentionally empty.
   RMSNorm, a learned output gate, and an output projection. Its cache holds
   the recurrent matrix and Q/K/V convolution tails; full-sequence and
   split-sequence calls match. Log-uniform decay-step initialization and
-  meta-device reinitialization are tested. 21 focused KDA tests pass.
-- Next: compare per-head rate initialization and optional low-rank gate
-  projections with the reference; keep chunkwise parallel training optional.
+  meta-device reinitialization are tested. The decay projection now has a
+  `d_model -> head_dim -> d_model` bottleneck, as does the output gate; 22
+  focused KDA tests pass.
+- Next: initialize per-head rates from the reference's positive range, then
+  study chunkwise parallel training and assess implementation difficulty.
   See `linear_attention/README.md` for
   interview prompts and `linear_attention/SOLUTIONS.md` for completed reasoning.
 

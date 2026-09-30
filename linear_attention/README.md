@@ -189,12 +189,17 @@ Completed:
 - The decay input bias is initialized from log-uniform positive steps in
   `[0.001, 0.1]` via inverse-softplus. `reset_parameters()` initializes only
   this layer's direct decay parameters and supports reinitialization after
-  meta-device materialization. The focused KDA test file has 21 passing tests.
+  meta-device materialization.
+- The decay input projection now uses a `d_model -> head_dim -> d_model`
+  bottleneck with no biases or intermediate activation. The output gate uses
+  the same bottleneck, with a bias only in its final projection so each output
+  feature can learn a default gate value. The focused KDA test file has 22
+  passing tests.
 
-Resume with **Exercise 5: parameterization review**. The log-space gate and
-initialization now work, but this educational layer still uses a full-rank
-decay projection and initializes the per-head log decay rate to zero. Compare
-those choices with the reference's low-rank projections and rate
-initialization before deciding whether to implement them. The learner writes
-the implementation; the interviewer writes tests and asks one focused
-conceptual question at a time.
+Resume with **Exercise 5: per-head rate initialization**. Initialize the
+positive rates from the reference's `[1, 16]` range instead of starting every
+rate at one, while keeping the existing channel-wise decay-step bias
+initialization. Then study the chunkwise algorithm and decide whether an
+educational implementation is worthwhile. The learner writes the
+implementation; the interviewer writes tests and asks one focused conceptual
+question at a time.

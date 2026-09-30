@@ -178,14 +178,37 @@ def test_kda_layer_normalizes_each_head_independently(monkeypatch) -> None:
     torch.testing.assert_close(normalized[0][:, 0].square().mean(), torch.tensor(1.0))
 
 
-def test_kda_layer_output_gate_has_a_learned_projection() -> None:
+def test_kda_output_gate_uses_bottleneck_and_learned_default() -> None:
     layer = KimiDeltaAttention(d_model=12, num_heads=3, kernel_size=3)
-    linear_layers = [
-        module for module in layer.modules() if isinstance(module, torch.nn.Linear)
-    ]
+    down, up = layer.output_gate
 
-    # QKV, alpha, beta, output projection, and at least one gate projection.
-    assert len(linear_layers) >= 5
+    assert isinstance(down, torch.nn.Linear)
+    assert isinstance(up, torch.nn.Linear)
+    assert (down.in_features, down.out_features) == (12, 4)
+    assert (up.in_features, up.out_features) == (4, 12)
+    assert down.bias is None and up.bias is not None
+    assert sum(p.numel() for p in layer.output_gate.parameters()) == 108
+
+    with torch.no_grad():
+        down.weight.zero_()
+        up.weight.zero_()
+        up.bias.copy_(torch.linspace(-1.0, 1.0, 12))
+    gate = torch.sigmoid(layer.output_gate(torch.randn(2, 5, 12)))
+    expected = torch.sigmoid(up.bias)[None, None, :].expand(2, 5, 12)
+    torch.testing.assert_close(gate, expected)
+
+
+def test_kda_decay_projection_uses_head_width_bottleneck() -> None:
+    layer = KimiDeltaAttention(d_model=12, num_heads=3, kernel_size=3)
+    down, up = layer.decay_input_proj
+
+    assert isinstance(down, torch.nn.Linear)
+    assert isinstance(up, torch.nn.Linear)
+    assert (down.in_features, down.out_features) == (12, 4)
+    assert (up.in_features, up.out_features) == (4, 12)
+    assert down.bias is None and up.bias is None
+    assert sum(p.numel() for p in layer.decay_input_proj.parameters()) == 96
+    assert layer.decay_input_proj(torch.randn(2, 5, 12)).shape == (2, 5, 12)
 
 
 def test_kda_layer_log_decay_parameters_receive_finite_gradients() -> None:
@@ -210,13 +233,16 @@ def test_kda_layer_log_decay_gate_matches_controlled_values(monkeypatch) -> None
     bias = torch.tensor([[-2.0, 0.0], [1.0, 2.0]])
     rates = torch.tensor([1.0, 2.0])
     with torch.no_grad():
-        layer.decay_input_proj.weight.zero_()
+        for parameter in layer.decay_input_proj.parameters():
+            parameter.zero_()
         layer.log_decay_rate.copy_(rates.log())
         layer.decay_input_bias.copy_(bias)
 
     captured = {}
 
-    def capture_recurrence(q, k, v, beta, alpha, initial_state=None, *, output_final_state=False):
+    def capture_recurrence(
+        q, k, v, beta, alpha, initial_state=None, *, output_final_state=False
+    ):
         captured["retention"] = alpha
         return torch.zeros_like(v), None
 
@@ -251,9 +277,9 @@ def test_kda_layer_can_be_initialized_after_meta_materialization() -> None:
 
     layer.to_empty(device="cpu")
     layer.apply(
-        lambda module: module.reset_parameters()
-        if hasattr(module, "reset_parameters")
-        else None
+        lambda module: (
+            module.reset_parameters() if hasattr(module, "reset_parameters") else None
+        )
     )
 
     assert all(torch.isfinite(parameter).all() for parameter in layer.parameters())
