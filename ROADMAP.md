@@ -5,11 +5,14 @@
 Completed through cached, batched speculative decoding. FlashAttention theory
 notes are complete, but its plain-PyTorch implementation is deferred. Local
 and sliding-window attention, including bounded-cache tests, has since been
-implemented. The active interview track is recurrent linear attention through
-an educational Kimi Delta Attention layer. Its fixed-size convolution and
-recurrent caches support split-sequence decoding, and its log-space retention
-gate and low-rank projections are implemented. Resume with the chunkwise KDA
-study. Multi-Head Latent Attention is exploratory work in progress, not a
+implemented. The educational linear-attention/KDA track is complete, including
+the full layer, fixed-size convolution and recurrent caches, log-space
+retention, low-rank projections, and per-head rate initialization. The tested
+chunkwise operator is explicitly AI-authored teaching material; recurrence
+remains the default. Optimized WY kernels are outside the completed scope.
+Next in the immediate path: FLOP and memory accounting, then YaRN; the
+FlashAttention implementation remains deferred.
+Multi-Head Latent Attention is exploratory work in progress, not a
 completed, tested roadmap stage.
 
 ## Completed foundations
@@ -275,7 +278,7 @@ written; the implementation file remains intentionally empty.
 - Still needs a stable public API, correctness tests, cache tests, and completed
   absorbed-path verification before being marked complete
 
-### Active: Recurrent linear attention and Kimi Delta Attention
+### Completed: Recurrent linear attention and Kimi Delta Attention
 
 - Plain recurrent linear attention, DeltaNet, scalar-gated DeltaNet, and the
   channel-wise KDA recurrence are implemented and tested.
@@ -289,10 +292,15 @@ written; the implementation file remains intentionally empty.
   focused KDA tests pass.
 - Per-head positive decay rates now start uniformly in `[1, 16]` before being
   stored in log space.
-- Next: study chunkwise parallel KDA, compare it with a simpler chunked
-  recurrence, and assess implementation difficulty.
-  See `linear_attention/README.md` for
-  interview prompts and `linear_attention/SOLUTIONS.md` for completed reasoning.
+- At the learner's request, Codex added `linear_attention/chunked_kda.py`:
+  an educational triangular-solve operator with 34 focused tests, including
+  gradients and cache continuation, and an optional `chunk_size` layer switch.
+  This part is AI-authored; production WY kernels remain deferred.
+- The educational track is complete. The captioned Manim video, worked example,
+  and code walkthrough remain available for review; optimized production
+  kernels are optional future work, not a completion requirement.
+  See `linear_attention/README.md` for exercise prompts and
+  `linear_attention/SOLUTIONS.md` for completed reasoning and authorship notes.
 
 ### 23. Mixture of Experts
 
@@ -344,7 +352,7 @@ written; the implementation file remains intentionally empty.
 
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
--> local/sliding-window attention [done] -> linear attention and KDA [active]
+-> local/sliding-window attention [done] -> linear attention and KDA [done]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 
@@ -357,7 +365,8 @@ stage combines the decoder and cache with practical sampling; and the completed
 speculative-decoding stage adds distribution-preserving draft acceleration,
 batched verification, and cache rollback. Local attention changes the
 attention pattern itself and has now been implemented with bounded cache
-memory. The current linear-attention/KDA track explores fixed-size recurrent
-memory; its next step is making the full layer resumable across decode calls.
+memory. The completed linear-attention/KDA track adds fixed-size recurrent
+memory, a full layer resumable across decode calls, and an AI-authored
+chunkwise worked example checked against the recurrence.
 FLOP and memory accounting, YaRN, and the deferred FlashAttention
 implementation remain available subsequent exercises.

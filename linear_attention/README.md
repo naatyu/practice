@@ -5,9 +5,13 @@ progresses toward an educational implementation of Kimi Delta Attention (KDA).
 Exercise prompts and interview questions live here; completed reasoning and
 corrections are recorded in `SOLUTIONS.md`.
 
-The implementation is intentionally recurrent and written in ordinary
-PyTorch. Chunkwise parallelization and fused kernels are optional later work,
-not prerequisites for understanding KDA.
+Status: **complete for the educational scope**. The learner implemented the
+recurrent operators and full KDA layer; Codex supplied the chunkwise worked
+example at the learner's request. Production WY kernels remain optional.
+
+The default implementation is intentionally recurrent and written in ordinary
+PyTorch. An AI-authored chunkwise worked example is also available for study;
+optimized WY kernels remain optional, not prerequisites for understanding KDA.
 
 Primary references:
 
@@ -128,7 +132,7 @@ grouped value attention can be added later.
 4. Why is the persistent decoding state independent of sequence length?
 5. How does its memory cost compare with a growing KV cache?
 
-## Exercise 5: Educational KDA layer (in progress)
+## Exercise 5: Educational KDA layer (completed)
 
 Wrap the verified recurrent operator in an `nn.Module` that follows the Kimi
 Linear layer design while remaining readable.
@@ -165,13 +169,63 @@ three fixed-size tails and the recurrent matrix state.
 7. Why does Kimi Linear retain periodic full-attention layers rather than
    using only KDA?
 
-## Exercise 6: Chunkwise parallel KDA (study active)
+## Exercise 6: Chunkwise parallel KDA (completed worked example; AI-authored)
 
-Study the chunkwise WY formulation used for parallel training, compare it with
-the recurrent reference, and assess implementation cost. Implementing the
-parallel form remains a decision after the study.
+Study how the recurrence becomes a chunkwise triangular system, compare the
+worked implementation with the recurrent reference, and understand why this
+educational form is not the paper's optimized WY kernel.
 
-## Current checkpoint
+### Worked implementation (AI-authored)
+
+[chunked_kda.py](chunked_kda.py) was **written by Codex at my request**, not
+implemented by me as an exercise. The assistant also wrote its tests and the
+optional selection branch in the layer. My recurrent implementation remains
+the default and the reference for checking this worked example.
+
+```python
+from linear_attention import KimiDeltaAttention
+
+recurrent = KimiDeltaAttention(d_model=128, num_heads=4, kernel_size=4)
+chunked = KimiDeltaAttention(
+    d_model=128, num_heads=4, kernel_size=4, chunk_size=32
+)
+chunked.load_state_dict(recurrent.state_dict())
+```
+
+Both paths share projections, convolutions, gates, output processing, and the
+same `KDACache`. Only the state operator changes. The standalone chunked
+operator accepts `log_retention`, whereas `recurrent_kda` accepts retention
+itself. The layer already computes log-retention, so no conversion back from
+potentially underflowed zeros is needed.
+
+Read the four numbered sections alongside the [code walkthrough](SOLUTIONS.md#chunkwise-code-walkthrough-ai-authored):
+build surviving keys, solve the errors, read the outputs, then carry the final
+state to the next chunk. There is a loop over chunks, not over tokens.
+
+Arithmetic and cached state use float32 (float64 for float64 inputs), including
+under AMP; output keeps the value tensor's dtype. This example explicitly
+allocates `[B, H, C, C, Dk]` pairwise tensors. It illustrates the math, not a
+guaranteed speedup or production memory optimization.
+
+```bash
+uv run pytest linear_attention/test_chunked_kda.py -q
+```
+
+Tests compare outputs, states, input and layer-parameter gradients, cache
+continuation, causality, gate extremes, and low-precision behavior.
+
+### Visual lesson
+
+[![Watch the KDA chunking lesson](visuals/kda_chunking_poster.jpg)](visuals/kda_chunking.mp4)
+
+[Watch the narrated, captioned Manim video](visuals/kda_chunking.mp4), then use the
+[illustrated lesson notes and rendering instructions](visuals/README.md) to
+revisit individual steps. It follows the same three-token example through
+decay, key alignment, a triangular error system, outputs, and outgoing memory.
+The animation teaches the same exact regrouping used by the worked operator;
+the paper's optimized WY kernels require additional work.
+
+## Completed track
 
 Completed:
 
@@ -196,10 +250,11 @@ Completed:
   feature can learn a default gate value.
 - Each head's positive decay rate is sampled uniformly from `[1, 16]`, then
   stored as its logarithm. The focused KDA test file has 22 passing tests.
+- An explicitly AI-authored educational chunkwise operator and optional layer
+  switch, with equivalence and gradient tests against the learner's recurrence.
 
-Resume with **Exercise 6: chunkwise KDA study**. Explain how a chunk can
-compute its local outputs in parallel while carrying one matrix state between
-chunks. Compare the paper's chunkwise algorithm with a simpler educational
-chunked recurrence, then decide whether implementing the parallel form is
-worthwhile. The learner writes implementations; the interviewer writes tests
-and asks one focused conceptual question at a time.
+The educational linear-attention/KDA track is done. The four numbered code
+sections and animation remain review material, not a pending implementation
+exercise. The learner asked the assistant to supply chunking as teaching
+material; do not count it as learner-written code. Production WY kernels
+remain optional. See the root roadmap for subsequent topics.

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from .chunked_kda import chunked_kda
+
 
 class CausalDepthwiseConv1d(nn.Module):
     """Mix past tokens independently per channel; preserve [B, S, C]."""
@@ -129,9 +131,20 @@ class KimiDeltaAttention(nn.Module):
 
     ``KDACache`` carries the matrix state and the projected Q/K/V inputs needed
     by the convolutions, so later calls continue the same sequence.
+
+    ``chunk_size=None`` keeps the learner's recurrent operator. A positive
+    chunk size selects the AI-authored educational chunkwise operator; all
+    projections, convolutions, gates, and cache fields stay shared.
     """
 
-    def __init__(self, d_model: int, num_heads: int, kernel_size: int):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        kernel_size: int,
+        *,
+        chunk_size: int | None = None,
+    ):
         # C heck num heads
         if num_heads <= 0:
             raise ValueError(f"Expected num_heads to be > 0 got {num_heads} instead.")
@@ -142,10 +155,18 @@ class KimiDeltaAttention(nn.Module):
                 f"Expected d_model to be divisible by num_heads but got {d_model} and {num_heads} instead"
             )
 
+        if chunk_size is not None and (
+            isinstance(chunk_size, bool)
+            or not isinstance(chunk_size, int)
+            or chunk_size <= 0
+        ):
+            raise ValueError("chunk_size must be None or a positive integer")
+
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
+        self.chunk_size = chunk_size
 
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out_proj = nn.Linear(d_model, d_model)
@@ -200,8 +221,7 @@ class KimiDeltaAttention(nn.Module):
         ) * nn.functional.softplus(
             decay_input + self.decay_input_bias[None, None, :, :]
         )  # [B, S, H, Dk]
-        retention = torch.exp(log_retention)  # [B, S, H, Dk]
-        retention = retention.transpose(1, 2)  # [B, H, S, Dk]
+        log_retention = log_retention.transpose(1, 2)  # [B, H, S, Dk]
 
         beta = nn.functional.sigmoid(self.beta(x))  # [B, S, H]
         beta = beta.transpose(1, 2)  # [B, H, S]
@@ -224,15 +244,29 @@ class KimiDeltaAttention(nn.Module):
         q_norm = nn.functional.normalize(q, dim=-1)  # [B, H, S, Dk]
         k_norm = nn.functional.normalize(k, dim=-1)  # [B, H, S, Dk]
 
-        output, state = recurrent_kda(
-            q_norm,
-            k_norm,
-            v,
-            beta,
-            retention,
-            initial_state=None if cache is None else cache.state,
-            output_final_state=use_cache,
-        )  # [B, H, S, Dk]
+        initial_state = None if cache is None else cache.state
+        if self.chunk_size is None:
+            output, state = recurrent_kda(
+                q_norm,
+                k_norm,
+                v,
+                beta,
+                log_retention.exp(),
+                initial_state=initial_state,
+                output_final_state=use_cache,
+            )  # [B, H, S, Dk]
+        else:
+            # AI-authored alternative; the surrounding layer is unchanged.
+            output, state = chunked_kda(
+                q_norm,
+                k_norm,
+                v,
+                beta,
+                log_retention,
+                initial_state=initial_state,
+                chunk_size=self.chunk_size,
+                output_final_state=use_cache,
+            )  # [B, H, S, Dk]
 
         output = self.norm(output)
         output = output.transpose(1, 2)  # [B, S, H, Dk]

@@ -227,19 +227,95 @@ gate values, decay-parameter gradients, initialization range,
 meta-device materialization, both projection bottlenecks, and the learned
 output-gate baseline are also tested.
 
-## Handoff: resume here
+## Chunking intuition studied
+
+An extra chunk loop around the token recurrence does not create parallelism.
+Within a chunk, each prediction error depends on earlier writes, which gives
+a strictly lower-triangular dependency matrix. The coefficient for a write
+at `i` uses its writer strength `beta_i`, key alignment, and channel-wise
+retention through gates `i+1 ... t`. The incoming state instead decays through
+gates `0 ... t`, including the current token's gate before its prediction.
+Prefix sums of log-retention let interval decay use differences of prefix
+sums, followed by exponentiation.
+
+Collecting those equations gives `(I + A) E = B`, where `B` is the error
+against decayed incoming memory alone. A triangular solve obtains the actual
+errors; the dependencies are preserved. The output readout matrix includes
+the current write on its diagonal. The
+[visual lesson and verified numerical example](visuals/README.md) expand
+these points and distinguish the educational solve from optimized WY kernels.
+
+## Chunkwise code walkthrough (AI-authored)
+
+The learner asked Codex to write [chunked_kda.py](chunked_kda.py) as a worked
+learning example. Its implementation, tests, and optional layer selection
+branch are assistant-authored, not a completed learner coding exercise. The
+existing recurrence and layer are the learner's reference implementation.
+
+For a chunk of length `C`, use rows `t` for readers and columns `i` for writers:
+
+1. **Surviving keys.** `cumulative_log[t]` sums gates through `t`.
+   `exp(G_t - G_i) * k_i` is write `i`'s key after gates `i+1 ... t`.
+   Broadcasting gives `[B, H, C, C, Dk]`. Upper-triangular entries are masked
+   before exponentiation to avoid overflowing future-directed differences.
+   The incoming memory instead uses `exp(G_t)` through gates `0 ... t`.
+2. **Prediction errors.** Build
+   `A[t, i] = beta_i * dot(k_t, surviving_key[t, i])` for `i < t`.
+   `base[t] = v_t - (k_t * exp(G_t)) @ S_in` ignores within-chunk writes.
+   Their effect is restored by solving `(I + A) @ errors = base`, using
+   `torch.linalg.solve_triangular(..., upper=False, unitriangular=True)`.
+   Both sides have batched shapes: the system is `[B, H, C, C]`, and the
+   errors are `[B, H, C, Dv]`. This is a solve, not a matrix inverse, and it
+   preserves the dependency on earlier errors without a Python token loop.
+3. **Outputs.** Replace the reading keys with queries to form `reads`.
+   Keep its diagonal: a query reads the state after its own correction.
+   `output = (q * exp(G)) @ S_in + reads @ errors`. These coefficients can
+   be negative; they are not softmax probabilities.
+4. **Outgoing state.** Take the last reader row of the survival factors.
+   `final_keys` contains all keys decayed to the chunk's end and scaled by
+   their writer beta. Then
+   `S_out = exp(G_last)[..., None] * S_in + final_keys.T @ errors`.
+   This `[B, H, Dk, Dv]` matrix is the only state carried between chunks.
+
+The short final chunk needs no padding. Chunk size one reduces to the same
+one-token update. Splitting calls at different chunk boundaries preserves
+the result up to floating-point rounding, and the input cache is not modified
+in place. All operations remain differentiable.
+
+The standalone operator accepts finite nonpositive **log-retention**, not
+the recurrent function's `alpha`. The full layer passes its log gate directly.
+Using float32 internally (float64 when supplied) supports low-precision inputs
+and triangular solving; autocast is disabled inside the chunk math. The
+returned output uses `v.dtype`, but the cached state keeps the compute dtype.
+The recurrent path's precision behavior is unchanged.
+
+This version spends `O(B H C² Dk)` temporary memory on pairwise decay and
+surviving keys; its triangular solve also has dependencies. It is an exact
+mathematical regrouping, not unlimited token parallelism or a claim of GPU
+speedup. More efficient WY representations and fused kernels are separate
+work. Very large chunks or extreme cumulative log magnitudes can still lose
+floating-point accuracy, so the recurrence remains a useful reference.
+
+The 34 tests in [test_chunked_kda.py](test_chunked_kda.py) cover controlled
+numbers, different chunk sizes, outputs and gradients against the recurrence,
+state continuation, causality, zero/unit write gates, strong forgetting,
+float16/bfloat16 and AMP, input validation, and full-layer integration.
+
+## Completion and handoff
 
 The recurrent KDA core, educational layer, fixed-size decoding cache,
 log-space decay initialization, per-head rate initialization, and low-rank
-decay and output-gate projections are implemented and tested. Next, study
-chunkwise KDA and assess whether a parallel educational implementation is
-worthwhile.
+decay and output-gate projections are implemented and tested. An AI-authored
+chunkwise operator is now available as explicitly requested teaching material,
+with the recurrence still the default. The learner has marked this educational
+track complete. Do not resume KDA as an unfinished exercise; its four numbered
+code sections, Manim animation, and companion guide are optional review
+material. Production WY kernels are outside the completed scope.
 
 Workflow:
 
-1. The learner implements the function and answers conceptual questions.
-2. The interviewer reviews without replacing the learner's code unnecessarily.
-3. The interviewer writes focused tests after the implementation is corrected.
+1. Move to the next roadmap topic when the learner is ready; revisit KDA only on request.
+2. Keep the assistant-authored worked example clearly attributed.
+3. For future exercises, the learner normally implements and the assistant writes tests.
 4. Preserve the learner's implementations unless asked to change them.
-5. Consider optional low-rank gates and per-head rate initialization; keep
-   chunkwise training algorithms optional.
+5. Keep the production WY kernel implementation optional.

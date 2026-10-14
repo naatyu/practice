@@ -1,0 +1,32 @@
+{
+  "voice": "en_US-ljspeech-high",
+  "segments": [
+    "Let's see how to compute Kimi Delta Attention in chunks. We will reorganize the recurrence without changing its result.",
+    "Each token decays the memory, predicts its value, writes a correction, and then reads the updated memory with its query.",
+    "The next prediction needs the previous token's updated state. Putting boundaries around this same loop does not make it parallel.",
+    "We will follow three tokens, two key channels, and one value feature. For this example, queries equal keys and the incoming memory is one, one.",
+    "A new correction is written after its own token's decay. Only the later gates can shrink that correction.",
+    "Add log retentions instead of multiplying retentions. A difference of prefix sums gives the interval.",
+    "Incoming memory is different. It existed before the chunk, so its decay includes every gate through the current token.",
+    "A key reads an earlier correction through a dot product. Aligned keys interact strongly. Orthogonal keys do not.",
+    "First decay the writer's key, channel by channel. Then take the dot product and scale it by the writer's beta.",
+    "In this example the coefficient is point one five. Multiplying it by the first error adds point one eight to the second prediction.",
+    "Errors depend only on earlier writes. The matrix is strictly lower triangular, excluding future and current writes.",
+    "The base error uses only decayed incoming memory. Subtract contributions from earlier corrections to get the actual error.",
+    "Move the earlier errors to the left. This gives a triangular system, with one row per token.",
+    "Incoming memory gives the predictions shown here. Subtract them from the target values to get the right hand side, capital B.",
+    "The first error is one point two.",
+    "Correct the second prediction. Error one becomes one point zero zero four.",
+    "Subtract both earlier corrections. Error two is about one point seven seven four.",
+    "A compiled triangular solver handles the dependencies and batches heads and value features. No matrix inverse is needed.",
+    "Now read the outputs: incoming memory plus the error contributions. This time, use query vectors in the coefficient matrix.",
+    "Outputs include the diagonal: each query reads its own write. The error matrix excludes it.",
+    "Decay the incoming state and add all surviving corrections to get the outgoing memory. The outputs and state match the token loop exactly.",
+    "The layer's keys, queries, gates, and write strengths are already known. We can prepare local coefficients for many chunks and heads together.",
+    "Carry state between chunks. Inside each chunk, matrix operations replace the Python token loop.",
+    "Only a fixed size memory state moves between chunks. Local token interactions have chunk size squared entries, rather than sequence length squared.",
+    "This triangular system is practical for learning. The paper's fused GPU kernels require more engineering.",
+    "Block operations do not guarantee speed. Stability, temporary memory, and the backend still matter.",
+    "Keep causal dependencies, but collect them into block equations. Same result, different computation."
+  ]
+}

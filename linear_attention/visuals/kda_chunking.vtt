@@ -1,0 +1,106 @@
+WEBVTT
+
+00:00:02.600 --> 00:00:10.900
+Start with the recurrence you know.
+Then reorganize its dependencies without changing the result.
+
+00:00:11.300 --> 00:00:26.200
+Each token first decays memory, predicts its value,
+writes the prediction error, then reads the updated memory.
+
+00:00:26.600 --> 00:00:40.900
+The next prediction needs the state produced by the previous token.
+Drawing chunk boundaries around this loop does not parallelize it.
+
+00:00:41.300 --> 00:00:53.600
+Keys are unit length. Queries equal keys only in this toy example.
+We will get exactly the same outputs in two different ways.
+
+00:00:54.000 --> 00:01:08.000
+Token 0's gate acted before the correction was written.
+Only gates at tokens 1 and 2 can decay this new correction.
+
+00:01:08.400 --> 00:01:15.400
+Products of retention become sums of log-retention.
+G_t is the prefix sum through token t; subtract G_i to exclude gate i.
+
+00:01:15.800 --> 00:01:24.100
+Incoming memory existed before the chunk.
+Its retention includes every gate from token 0 through token t: exp(G_t).
+
+00:01:24.500 --> 00:01:33.100
+A key reads an earlier correction through a dot product.
+Aligned directions interact strongly; orthogonal directions do not.
+
+00:01:33.500 --> 00:01:41.500
+Decay scales the writer's key channel by channel before the read.
+The writer's beta scales how strongly that correction was written.
+
+00:01:41.900 --> 00:01:52.700
+This coefficient links error0 to token 1's prediction.
+We can compute it from keys, gates, and beta before knowing error0.
+
+00:01:53.100 --> 00:02:00.100
+Errors depend only on earlier writes inside the chunk.
+A is strictly lower triangular: future writes and the current write are excluded.
+
+00:02:00.500 --> 00:02:09.800
+b_t is value minus the prediction from decayed incoming memory alone.
+Subtract earlier corrections to obtain the actual error e_t.
+
+00:02:10.200 --> 00:02:18.200
+Move the earlier-error terms to the left: (I + A) E = B.
+E has shape [B, H, C, Dv]; the system matrix is [B, H, C, C].
+
+00:02:18.600 --> 00:02:27.700
+Incoming memory alone predicts [0.800, 0.816, 0.504].
+Subtract these from values [2, 2, 3] to get B = [1.200, 1.184, 2.496].
+
+00:02:28.100 --> 00:02:33.500
+First row: e0 = 1.200.
+
+00:02:33.900 --> 00:02:39.300
+Second row: e1 = 1.184 - .150 x 1.200 = 1.004.
+
+00:02:39.700 --> 00:02:45.000
+Third row: e2 = 2.496 - .180 x 1.200 - .504 x 1.004 = 1.774.
+
+00:02:45.400 --> 00:02:54.700
+The dependencies still exist. A compiled triangular solver handles them
+and batches heads and value columns. We do not form a matrix inverse.
+
+00:02:55.100 --> 00:03:03.100
+Outputs are decayed incoming-memory readouts plus M E.
+M uses queries to read writes; here queries equal keys for readable numbers.
+
+00:03:03.500 --> 00:03:10.500
+M includes the diagonal: each output reads its own write.
+The error-dependency matrix A excluded the diagonal.
+
+00:03:10.900 --> 00:03:21.400
+The final memory is decayed S_in plus all surviving corrections.
+These outputs and this state match the original token loop exactly.
+
+00:03:21.800 --> 00:03:35.800
+Keys, queries, gates, and beta are already known for the layer input.
+Build each chunk's local coefficients across chunks and heads in parallel.
+
+00:03:36.200 --> 00:03:43.200
+Our educational version still advances state from chunk to chunk.
+Inside a chunk, triangular solves and matrix products replace a Python token loop.
+
+00:03:43.600 --> 00:03:52.900
+Fixed-size state is passed between chunks. Local token interactions are C x C.
+The whole sequence never needs one full S x S attention matrix.
+
+00:03:53.300 --> 00:04:01.300
+An educational triangular-system implementation is feasible.
+The paper's WY transforms and fused GPU kernels are a larger engineering task.
+
+00:04:01.700 --> 00:04:08.700
+A block formulation exposes larger operations; it does not guarantee speed.
+Numerical stability, memory use, and the chosen backend still matter.
+
+00:04:09.100 --> 00:04:16.100
+Remember the idea: preserve the causal dependencies,
+but collect them into block equations instead of individual Python updates.

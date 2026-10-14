@@ -11,8 +11,10 @@ __all__ = [
     "CausalDepthwiseConv1d",
     "KDACache",
     "KimiDeltaAttention",
+    "chunked_kda",
     "naive_recurrent_delta_net",
     "naive_recurrent_gated_delta_net",
     "naive_recurrent_linear_attention",
     "recurrent_kda",
 ]
+from .chunked_kda import chunked_kda

@@ -26,10 +26,15 @@ Most topic folders follow the same structure:
   with trusted PyTorch implementations.
 
 The core exercises are implemented interactively as part of the learning
-process. Tests and explicitly requested follow-up implementations may be
-written with AI assistance so I can spend more practice time on the algorithms
-and systems reasoning. The resulting code and tests are intentionally kept
-readable because they are also reference material for later review.
+process. Tests, learning visuals, and explicitly requested follow-up
+implementations may be written with AI assistance so I can spend more practice
+time on the algorithms and systems reasoning. The resulting code and tests
+are intentionally kept readable because they are also reference material for
+later review.
+
+One explicit exception to my own implementation work is the educational
+[chunkwise KDA operator](linear_attention/chunked_kda.py): I asked Codex to
+write it as a worked example to study. The recurrent KDA implementation is mine.
 
 ## Topics covered
 
@@ -60,26 +65,33 @@ readable because they are also reference material for later review.
 - Batched speculative decoding with independent draft and target KV caches
 - Cache rollback, synchronized batch progress, and EOS handling during
   speculative decoding
+- Causal sliding-window attention and bounded decoding caches
+- Recurrent linear attention, DeltaNet, gated DeltaNet, and Kimi Delta Attention
+- Full KDA layer with short convolutions, learned gates, and fixed-size cache
+- Educational chunkwise KDA (AI-authored worked example)
 - Vectorized K-means prediction as a separate classical-ML warmup
 
 ## Current checkpoint
 
 The main decoder path is complete through cached, batched speculative decoding.
+Local/sliding-window attention and the educational linear-attention/KDA track
+are also complete, including recurrent caching and a tested chunkwise worked
+example. The chunkwise implementation is explicitly credited to Codex.
 The repository also contains an exploratory Multi-Head Latent Attention (MLA)
 implementation, but MLA remains work in progress and does not yet have the same
 test coverage as the completed components.
 
-The next implementation milestone is FlashAttention in plain PyTorch. Its
-interview questions and online-softmax reasoning notes already exist, while the
-implementation itself is intentionally still pending. Local attention, FLOP
-and memory accounting, YaRN, and broader systems topics follow. The complete
-ordered plan is in [ROADMAP.md](ROADMAP.md).
+The next topics in the roadmap are FLOP and memory accounting and YaRN.
+FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
+implementation remains deferred. The complete ordered plan is in
+[ROADMAP.md](ROADMAP.md).
 
 ## Repository map
 
 | Area | Folder | Status |
 | --- | --- | --- |
-| Attention fundamentals | [`attention`](attention) | Complete |
+| Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
+| Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |
@@ -88,7 +100,7 @@ ordered plan is in [ROADMAP.md](ROADMAP.md).
 | KV-cache concepts | [`kv_cache`](kv_cache) | Complete |
 | Tokenization | [`bpe`](bpe) | Complete |
 | Sampling and speculative decoding | [`generation`](generation) | Complete reference and cached batched paths |
-| FlashAttention | [`flash-attention`](flash-attention) | Theory notes complete; implementation next |
+| FlashAttention | [`flash-attention`](flash-attention) | Theory notes complete; implementation deferred |
 | Classical ML warmups | [`machine_learning`](machine_learning) | K-means prediction complete |
 
 ## Running the exercises
