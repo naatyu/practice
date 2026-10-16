@@ -30,6 +30,10 @@ activation and after the down projection.
 After completing the GELU MLP, implement a SwiGLU feed-forward network with the
 same input/output interface.
 
+The shared implementation uses bias-free projections by default, including
+when reused by the decoder and MoE experts. Pass `bias=True` explicitly to
+enable projection biases. Inputs may have any leading dimensions: `[..., D]`.
+
 ### Discussion questions
 
 1. How does a gated linear unit differ from the standard GELU MLP?

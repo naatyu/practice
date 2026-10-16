@@ -13,7 +13,7 @@ Use:
 - Causal self-attention
 - Two RMSNorm layers
 - Two residual connections
-- A position-wise SwiGLU feed-forward network
+- A position-wise SwiGLU feed-forward network (shared bias-free default)
 - Feed-forward hidden dimension supplied to the constructor
 
 Do not use `torch.nn.TransformerEncoderLayer` or

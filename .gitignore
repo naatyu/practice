@@ -40,6 +40,7 @@ coverage.xml
 
 # IDE specific files
 .idea/
-.vscode/
+.vscode/*
+!.vscode/launch.json
 *.swp
 *.swo

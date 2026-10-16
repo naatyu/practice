@@ -85,12 +85,23 @@ F_swiglu = (8/3)E
 The ratio is normally rounded to a hardware-friendly dimension and remains an
 explicit architecture argument.
 
+The repository's shared SwiGLU now defaults to `bias=False` on both fused
+up/gate and down projections. Biases are optional (`bias=True`), not a
+requirement of the SwiGLU activation. With input width D and hidden width F,
+the bias-free layer has exactly `3DF` parameters; enabling biases adds
+`2F + D`. MoE references and the decoder reuse this shared implementation.
+Old biased checkpoints need `bias=True` when constructing the corresponding
+SwiGLU; they are not directly compatible with a bias-free state dictionary.
+
 ## SwiGLU testing lessons
 
 A shape test cannot detect applying SiLU to the wrong branch, adding instead of
 multiplying, or splitting the fused projection incorrectly. A stronger test
-uses asymmetric hand-set weights, zero biases, and no dropout, then compares
+uses asymmetric hand-set weights, no biases, and no dropout, then compares
 with a separately calculated scalar result.
+
+Separate tests cover the optional bias-enabled path, including nonzero bias
+contributions, and assert that default state dictionaries contain only weights.
 
 PyTorch linear weights have shape `(out_features, in_features)`, so a fused
 `Linear(1, 2)` stores a `(2, 1)` weight. Parameters should be modified with

@@ -81,7 +81,12 @@ The repository also contains an exploratory Multi-Head Latent Attention (MLA)
 implementation, but MLA remains work in progress and does not yet have the same
 test coverage as the completed components.
 
-The next topics in the roadmap are FLOP and memory accounting and YaRN.
+The active track is [Mixture of Experts](moe/README.md): routing, expert batching,
+packed weights, and sorted dispatch/combine are implemented and tested. Next is
+grouped GEMM, then decoder integration and training/balancing strategies. The
+session handoff is saved in the MoE notes.
+
+FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
 implementation remains deferred. The complete ordered plan is in
 [ROADMAP.md](ROADMAP.md).
@@ -92,6 +97,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
+| Mixture of Experts | [`moe`](moe) | Active; packed dispatch/combine tested, grouped GEMM next |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |
@@ -122,6 +128,18 @@ uv run pytest -q training
 uv run pytest -q bpe
 uv run pytest -q generation
 ```
+
+### Debugging
+
+Open the repo root in VS Code and select the `.venv` Python interpreter.
+In Run and Debug, choose **Python: Debug a module**, then press F5 and enter
+the dotted module name, e.g. `moe.packed_experts` (no `.py`). This runs with
+the repo root on the import path, supporting both sibling and relative imports.
+Set breakpoints as usual; the module's `if __name__ == "__main__":` block runs.
+
+To debug tests instead, open a test file and choose **Python: Debug current
+test file**. These launch configurations require the Python Debugger extension.
+Terminal equivalent for running a module: `uv run python -m moe.packed_experts`.
 
 The implementations often avoid PyTorch's high-level equivalent on purpose.
 The goal is to understand and reproduce the underlying operation; the built-in

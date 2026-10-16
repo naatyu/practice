@@ -10,8 +10,11 @@ the full layer, fixed-size convolution and recurrent caches, log-space
 retention, low-rank projections, and per-head rate initialization. The tested
 chunkwise operator is explicitly AI-authored teaching material; recurrence
 remains the default. Optimized WY kernels are outside the completed scope.
-Next in the immediate path: FLOP and memory accounting, then YaRN; the
-FlashAttention implementation remains deferred.
+The learner chose MoE as the next active track. Routing, naive and expert-batched
+MoE, packed weights, and sorted dispatch/combine are implemented and tested.
+Resume at grouped GEMM; see `moe/README.md` for the exact pending question.
+FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
+implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
 completed, tested roadmap stage.
 
@@ -302,12 +305,27 @@ written; the implementation file remains intentionally empty.
   See `linear_attention/README.md` for exercise prompts and
   `linear_attention/SOLUTIONS.md` for completed reasoning and authorship notes.
 
-### 23. Mixture of Experts
+### 23. Mixture of Experts (active)
 
-- Top-k routing
-- Expert capacity
-- Load-balancing losses
-- Expert parallelism
+1. MoE fundamentals: experts, sparsity, and active compute — done
+2. Naive top-k routing and weighted expert combination — done
+3. Expert-wise token dispatch and output accumulation — done; packed weights
+   and sorted dispatch/combine also tested, grouped GEMM next
+4. Decoder integration, training, and routing diagnostics
+5. Auxiliary load-balancing loss
+6. Expert capacity, overflow, and dropless routing
+7. Router numerical stability and z-loss
+8. Shared experts and fine-grained expert specialization
+9. Auxiliary-loss-free balancing and training-step updates
+10. MoE FLOPs, memory, and expert-parallel systems
+11. LatentMoE, normalization, and SiTU-GLU
+12. Quantile balancing: exact implementation to histogram estimation
+13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
+
+The learner implements; the assistant interviews, reviews, writes tests, and
+records corrected reasoning. Last checked: 35 MoE tests pass. Session handoff
+and the unanswered grouped-GEMM question are in `moe/README.md` and
+`moe/SOLUTIONS.md`.
 
 ### 24. Fine-tuning
 
@@ -353,6 +371,7 @@ written; the implementation file remains intentionally empty.
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
+-> MoE [active: grouped GEMM next]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

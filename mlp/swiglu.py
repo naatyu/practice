@@ -3,14 +3,21 @@ from torch import nn
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, d_model: int, hidden_dim: int, dropout_p: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        hidden_dim: int,
+        dropout_p: float = 0.0,
+        *,
+        bias: bool = False,
+    ) -> None:
         super().__init__()
-        self.up_proj = nn.Linear(d_model, 2 * hidden_dim)
-        self.down_proj = nn.Linear(hidden_dim, d_model)
+        self.up_proj = nn.Linear(d_model, 2 * hidden_dim, bias=bias)
+        self.down_proj = nn.Linear(hidden_dim, d_model, bias=bias)
         self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Transform token features: input and output [B, S, d_model]."""
+        """Preserve [..., d_model]; projections are bias-free unless requested."""
         x = self.up_proj(x)
         value, gate = torch.chunk(x, 2, dim=-1)
         gate = torch.nn.functional.silu(gate)
