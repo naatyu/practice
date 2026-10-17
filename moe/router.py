@@ -12,7 +12,7 @@ class TopKRouter(nn.Module):
 
         self.router = nn.Linear(d_model, num_experts, bias=False)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:  # ty: ignore[invalid-mutable-override]
         """
         E = number of experts
         K = number of selected experts

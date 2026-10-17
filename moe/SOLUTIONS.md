@@ -123,26 +123,100 @@ repeated token destinations into `[T, D]`; `reshape_as(x)` restores `[B, S, D]`.
 Gather reads indexed values; index-add writes and sums contributions.
 
 The learner's implementation passes output and gradient comparisons with
-`ExpertBatchedMoe`, including transposed parameter/gradient mapping. It still
-loops over experts: sorted dispatch and packed storage are ready, but grouped
-GEMM has not been implemented. The assistant's cleanup only renamed a misspelled
-index variable, simplified flatten/reshape operations and comments, and added a
-short class docstring and return annotation on initialization.
+`ExpertBatchedMoe`, including transposed parameter/gradient mapping. The
+learner subsequently added `GroupedExperts`, with grouped up/gate and down
+matmuls separated by SwiGLU. `PackedExperts` retains the loop for comparison.
+The assistant added the `GroupedMoE(expert_backend="loop" | "grouped_mm")`
+selector and backend equivalence tests. The learner subsequently selected
+grouped MM as the default; tiny-shape/float64 reference tests explicitly
+request the loop. Both backends
+have matching state dictionaries, so identical weights can be loaded directly.
+
+## Grouped GEMM reasoning
+
+Ordinary bmm requires equal matrix shapes per batch entry. Expert groups with
+counts `[2, 0, 3]` cannot be stacked directly. Grouped GEMM instead accepts
+packed input `[N, D]`, expert weights `[E, D, 2F]`, and int32 exclusive-end
+offsets `[2, 2, 5]`. The slices are `[0:2]`, `[2:2]`, and `[2:5]`; repeated
+offsets retain the empty expert's identity. The down projection uses hidden
+inputs `[N, F]` and weights `[E, F, D]`. Both matmuls reuse the offsets because
+the activation changes features while preserving assignment rows and order.
+
+Optimized GPU grouped kernels schedule tiles from multiple independent GEMMs
+together, reducing per-expert launch overhead and improving utilization when
+individual groups are small. The expert arithmetic is unchanged. This machine
+has no CUDA build, but PyTorch 2.13's CPU path was checked for output and
+gradient equivalence, including empty experts, in supported float32 layouts.
+Float64 remains a reference-loop test configuration. CPU timings do not prove
+GPU grouped-kernel performance.
+
+## Quick CPU benchmark (2026-10-17)
+
+Reproduce with:
+
+```sh
+uv run python -m moe.benchmark_moe --threads 1 --min-run-time 0.3
+```
+
+Environment: PyTorch 2.13.0, macOS 27.0.1 arm64, CPU float32, one PyTorch thread,
+seed 42, eager execution. Each implementation has identical router and expert
+weights and sees the same input; outputs are checked before timing. B=1 and
+S=T. Timings are end-to-end medians in milliseconds using
+`torch.utils.benchmark.Timer.blocked_autorange`, with warmup and at least 0.3
+seconds of measurement per configuration. Inference disables autograd.
+Forward + backward includes clearing gradients, the forward pass, a
+squared-mean loss, and backward, including input gradients. Routing, sorting
+where applicable, dispatch, router weighting, and combination are included.
+The largest relative timing IQR was 5.0%; treat this as a quick local sample.
+
+| T | D | F | E | K | Mode | Naive | Expert-batched | Packed loop | Grouped MM |
+|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|
+| 1 | 64 | 128 | 8 | 2 | inference | 0.039 | 0.131 | 0.061 | 0.037 |
+| 1 | 64 | 128 | 8 | 2 | forward + backward | 0.176 | 0.448 | 0.453 | 0.134 |
+| 32 | 64 | 128 | 8 | 2 | inference | 0.949 | 0.197 | 0.094 | 0.059 |
+| 32 | 64 | 128 | 8 | 2 | forward + backward | 3.815 | 0.582 | 0.614 | 0.202 |
+| 256 | 128 | 256 | 8 | 2 | inference | 7.942 | 0.518 | 0.411 | 0.328 |
+| 256 | 128 | 256 | 8 | 2 | forward + backward | 44.690 | 1.484 | 1.974 | 0.874 |
+
+At T=256, grouped MM was about 1.25x faster than the packed loop for inference
+and 2.26x for forward + backward. At T=1, per-expert overhead makes the
+expert-batched loop slower than the naive implementation, which calls only
+the two selected experts; the small naive/grouped inference difference is
+close to timing noise. Grouping also performs SwiGLU across all packed rows
+at once instead of once per expert. These measurements compare runtime,
+not peak memory, GPU throughput, or a trained model's quality. Parameter
+counts and selected-expert arithmetic are the same for all four methods.
 
 ## Handoff
 
-The learner's router, naive MoE, and expert-batched MoE are correct for the agreed
-initial policy. PackedExperts and GroupedMoE are now verified too, with 35 passing
-assistant-authored MoE tests. The learner correctly explained that batching mainly
-reduces Python calls and increases matrix sizes, not expert arithmetic. Resume
-with replacing the expert loop by grouped GEMM. Keep explanations concrete and
-introduce one shape transformation at a time.
+The learner's router, naive MoE, expert-batched MoE, and grouped experts are
+implemented. PackedExperts and GroupedExperts remain side by side in
+`packed_experts.py`; the assistant added the selectable backend and benchmark.
+There are 42 passing assistant-authored MoE tests. The learner has also
+completed decoder integration: optional expert-count and top-k arguments
+select the FFN in `TransformerBlock` and are forwarded by `DecoderModel`.
+Dense SwiGLU remains the default, and each decoder layer owns separate experts.
+MoE preserves the FFN's input/output shape, so the existing normalization and
+residual paths remain valid. Moving the new arguments after the existing
+`eps` argument fixed the positional-constructor regression.
 
-Session ended 2026-10-16 before the learner answered why ordinary `bmm` cannot
-directly stack input groups of lengths [2, 0, 3]. Resume with that question;
-do not treat grouped GEMM as implemented or provide the full implementation.
-Use `packed_experts.py` for both PackedExperts and GroupedMoE. Preserve the
-existing reference loop for equivalence tests when adding a grouped backend.
+The assistant's integration tests verify module selection, configuration,
+causality, nonzero task-loss gradients through routers and expert weights,
+and full-versus-cached decoding with full or sliding-window attention. Latest
+focused verification: 74 tests passed across MoE, Transformer block, decoder,
+and training. A tiny MoE training run and routing diagnostics remain future work.
+
+Resume with the unanswered question: "What would you log to tell whether the
+router uses all experts or concentrates most assignments in a few?" Discuss
+that first, then let the learner implement diagnostics and a tiny training run.
+Keep explanations concrete and introduce one shape transformation at a time.
+
+Earlier verification on 2026-10-17: 332 repository tests passed before decoder
+integration. ty 0.0.89 checks passed for the MoE folder after concrete test and
+benchmark type fixes and narrow ignores for PyTorch's writable `forward`
+annotation. The same compatibility diagnostic currently appears on the
+Transformer block and decoder `forward` definitions; it is independent of the
+passing runtime integration tests.
 
 Initialization is settled for this exercise: normal with std `1/sqrt(fan_in)`.
 Do not reopen the choice of uniform versus normal or switch to 0.02 implicitly.
@@ -150,14 +224,8 @@ The learner understands the distinction between fan-in reasoning and model-wide
 recipes. Keep docstrings and comments concise; lengthy inline explanations were
 explicitly rejected. Notes can carry the longer reasoning.
 
-Before coding a native grouped GEMM call, inspect the installed PyTorch API,
-dtype/device and alignment constraints, and backward support. Native grouped
-GEMM has not been tested here. Previous runs reported an NVIDIA driver too old
-for the installed PyTorch CUDA build, so GPU execution must not be assumed.
-If unavailable, explain the limitation and retain a clearly labeled reference
-path rather than claiming the expert loop is a real grouped kernel.
-
-Last full verification: 325 repo tests, including 35 MoE tests, passed. The
-assistant authored tests and the latest small readability cleanup; the learner
-authored the MoE algorithms. Current work is uncommitted; preserve existing
-changes and do not commit or push unless asked.
+GPU dtype, alignment, and backward behavior still require validation on the
+target GPU. Do not infer a CUDA speedup from this CPU benchmark. The assistant
+authored tests and the backend selector/benchmark; the learner authored the
+MoE algorithms. Preserve existing changes and do not commit or push unless
+asked.

@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from mlp import SwiGLU
+from moe import GroupedMoE
 from multi_head_attention import MultiHeadAttention
 from normalization import RMSNorm
 from positional_encoding import RotaryPositionalEncoding
@@ -18,6 +19,8 @@ class TransformerBlock(nn.Module):
         rope: RotaryPositionalEncoding | None = None,
         window_size: int | None = None,
         eps: float = 1e-6,
+        num_experts: int | None = None,
+        top_k: int | None = None,
     ):
         super().__init__()
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
@@ -29,9 +32,17 @@ class TransformerBlock(nn.Module):
             rope=rope,
             window_size=window_size,
         )
-        self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)
+
         self.norm1 = RMSNorm(d_model, eps=eps)
         self.norm2 = RMSNorm(d_model, eps=eps)
+
+        # Select between ffn or moe
+        if num_experts is not None:
+            if top_k is None:
+                raise ValueError("Top K can't be None when using moe.")
+            self.ffn = GroupedMoE(d_model, hidden_dim, num_experts, top_k)
+        else:
+            self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)
 
     def forward(
         self,

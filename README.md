@@ -82,9 +82,10 @@ implementation, but MLA remains work in progress and does not yet have the same
 test coverage as the completed components.
 
 The active track is [Mixture of Experts](moe/README.md): routing, expert batching,
-packed weights, and sorted dispatch/combine are implemented and tested. Next is
-grouped GEMM, then decoder integration and training/balancing strategies. The
-session handoff is saved in the MoE notes.
+packed weights, and selectable loop/grouped-MM execution are tested on CPU.
+Dense/MoE decoder integration is also tested. Benchmark results and the
+session handoff are saved in the MoE notes. Next is a tiny training run and
+routing diagnostics, followed by balancing strategies.
 
 FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
@@ -97,7 +98,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
-| Mixture of Experts | [`moe`](moe) | Active; packed dispatch/combine tested, grouped GEMM next |
+| Mixture of Experts | [`moe`](moe) | Decoder integration tested; tiny training run and routing diagnostics next |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |

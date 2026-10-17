@@ -25,7 +25,7 @@ class RecordingExpert(nn.Module):
         self.scale = scale
         self.inputs = []
 
-    def forward(self, x):
+    def forward(self, x):  # ty: ignore[invalid-mutable-override]
         self.inputs.append(x.detach().clone())
         return self.scale * x
 

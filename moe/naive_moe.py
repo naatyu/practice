@@ -2,7 +2,7 @@ import torch
 from torch import nn
 
 from mlp import SwiGLU
-from moe import TopKRouter
+from .router import TopKRouter
 
 
 class NaiveMoe(nn.Module):
@@ -13,7 +13,7 @@ class NaiveMoe(nn.Module):
             [SwiGLU(d_model, hidden_dim) for _ in range(num_experts)]
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
         """
         x: [B, S, D]
         """

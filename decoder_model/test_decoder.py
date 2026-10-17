@@ -4,6 +4,8 @@ import pytest
 import torch
 
 from decoder_model import DecoderCache, DecoderModel
+from moe import GroupedMoE
+from transformer_block import TransformerBlock
 
 
 @pytest.fixture
@@ -198,3 +200,68 @@ def test_local_attention_uses_bounded_cache_and_absolute_positions(
     for key_cache, value_cache in cache:
         assert key_cache.shape[-2] == window_size
         assert value_cache.shape[-2] == window_size
+
+
+def test_moe_decoder_registers_experts_in_every_layer_and_backpropagates():
+    torch.manual_seed(37)
+    model = DecoderModel(
+        vocab_size=32,
+        d_model=16,
+        num_heads=2,
+        max_seq_len=12,
+        n_layers=2,
+        hidden_dim=32,
+        num_experts=4,
+        top_k=2,
+    )
+    input_ids = torch.randint(0, 32, (2, 6))
+    logits = model(input_ids)
+    assert logits.shape == (2, 6, 32)
+    loss = torch.nn.functional.cross_entropy(
+        logits[:, :-1].reshape(-1, 32), input_ids[:, 1:].reshape(-1)
+    )
+    loss.backward()
+
+    for block in model.blocks:
+        assert isinstance(block, TransformerBlock)
+        assert isinstance(block.ffn, GroupedMoE)
+        assert block.ffn.num_experts == 4
+        assert block.ffn.top_k == 2
+        router_grad = block.ffn.router.router.weight.grad
+        assert router_grad is not None
+        assert torch.isfinite(router_grad).all()
+        assert router_grad.abs().sum() > 0
+        for weight in (block.ffn.experts.up_weight, block.ffn.experts.down_weight):
+            assert weight.grad is not None
+            assert torch.isfinite(weight.grad).all()
+            assert weight.grad.abs().sum() > 0
+    assert model.blocks[0].ffn is not model.blocks[1].ffn
+
+
+@pytest.mark.parametrize("window_size", [None, 3])
+def test_moe_decoder_cached_logits_match_full_forward(window_size):
+    torch.manual_seed(38)
+    model = DecoderModel(
+        vocab_size=32,
+        d_model=16,
+        num_heads=2,
+        num_kv_heads=1,
+        max_seq_len=12,
+        n_layers=2,
+        hidden_dim=32,
+        num_experts=4,
+        top_k=2,
+        window_size=window_size,
+    ).eval()
+    input_ids = torch.randint(0, 32, (2, 7))
+    with torch.inference_mode():
+        expected = model(input_ids)
+        prompt_logits, cache = model(input_ids[:, :3], use_cache=True)
+        chunks = [prompt_logits]
+        for position in range(3, input_ids.shape[1]):
+            logits, cache = model(
+                input_ids[:, position : position + 1], kv_caches=cache, use_cache=True
+            )
+            chunks.append(logits)
+    torch.testing.assert_close(torch.cat(chunks, dim=1), expected, atol=1e-5, rtol=1e-5)
+    assert cache.position == input_ids.shape[1]

@@ -5,7 +5,7 @@ import torch
 
 from mlp import SwiGLU
 from moe.expert_batched_moe import ExpertBatchedMoe
-from moe.packed_experts import GroupedMoE, PackedExperts
+from moe.packed_experts import GroupedExperts, GroupedMoE, PackedExperts
 from moe.router import TopKRouter
 
 
@@ -24,7 +24,7 @@ def copy_reference_weights(reference, grouped):
 def test_grouped_outputs_and_gradients_match_reference(top_k, dtype):
     torch.manual_seed(31)
     reference = ExpertBatchedMoe(3, 5, 4, top_k).to(dtype)
-    grouped = GroupedMoE(3, 5, 4, top_k).to(dtype)
+    grouped = GroupedMoE(3, 5, 4, top_k, expert_backend="loop").to(dtype)
     copy_reference_weights(reference, grouped)
     x_reference = torch.randn(2, 4, 3, dtype=dtype, requires_grad=True)
     x_grouped = x_reference.detach().clone().requires_grad_()
@@ -74,7 +74,7 @@ def test_packed_experts_accept_empty_groups_and_preserve_grouped_order(counts):
 
 def test_grouped_accepts_noncontiguous_input():
     reference = ExpertBatchedMoe(3, 5, 4, 2)
-    grouped = GroupedMoE(3, 5, 4, 2)
+    grouped = GroupedMoE(3, 5, 4, 2, expert_backend="loop")
     copy_reference_weights(reference, grouped)
     x = torch.randn(2, 4, 3).transpose(0, 1)
     assert not x.is_contiguous()
@@ -92,7 +92,7 @@ class FixedRouter(TopKRouter):
 
 
 def test_controlled_weight_permutation_and_repeated_token_accumulation():
-    grouped = GroupedMoE(2, 1, 4, 2).double()
+    grouped = GroupedMoE(2, 1, 4, 2, expert_backend="loop").double()
     grouped.router = FixedRouter()
     # All experts use the same gated hidden scalar, scaled by their down weights.
     with torch.no_grad():
@@ -117,3 +117,72 @@ def test_packed_parameters_have_fan_in_scaled_normal_initialization():
         std = fan_in**-0.5
         assert abs(weight.mean().item()) < std * 0.02
         assert abs(weight.std().item() / std - 1) < 0.02
+
+
+@pytest.mark.parametrize(
+    ("backend", "expert_cls"), [("loop", PackedExperts), ("grouped_mm", GroupedExperts)]
+)
+def test_grouped_moe_selects_expert_backend(backend, expert_cls):
+    model = GroupedMoE(16, 32, 4, 2, expert_backend=backend)
+    assert isinstance(model.experts, expert_cls)
+
+
+def test_grouped_moe_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="Unknown expert backend"):
+        GroupedMoE(16, 32, 4, 2, expert_backend="unknown")  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("top_k", [1, 2, 4])
+def test_grouped_mm_outputs_and_gradients_match_expert_batched_reference(top_k):
+    torch.manual_seed(34)
+    reference = ExpertBatchedMoe(16, 32, 4, top_k)
+    packed = GroupedMoE(16, 32, 4, top_k, expert_backend="loop")
+    grouped = GroupedMoE(16, 32, 4, top_k, expert_backend="grouped_mm")
+    copy_reference_weights(reference, packed)
+    grouped.load_state_dict(packed.state_dict())
+    tokens = torch.randn(2, 3, 16)
+    probe = torch.randn_like(tokens)
+    reference_input = tokens.clone().requires_grad_()
+    expected = reference(reference_input)
+    (expected * probe).sum().backward()
+
+    for model in (packed, grouped):
+        x = tokens.clone().requires_grad_()
+        actual = model(x)
+        torch.testing.assert_close(actual, expected)
+        (actual * probe).sum().backward()
+        torch.testing.assert_close(x.grad, reference_input.grad)
+        torch.testing.assert_close(
+            model.router.router.weight.grad, reference.router.router.weight.grad
+        )
+        assert model.experts.up_weight.grad is not None
+        assert model.experts.down_weight.grad is not None
+        for expert_id, expert in enumerate(reference.experts):
+            assert isinstance(expert, SwiGLU)
+            assert expert.up_proj.weight.grad is not None
+            assert expert.down_proj.weight.grad is not None
+            torch.testing.assert_close(
+                model.experts.up_weight.grad[expert_id], expert.up_proj.weight.grad.T
+            )
+            torch.testing.assert_close(
+                model.experts.down_weight.grad[expert_id], expert.down_proj.weight.grad.T
+            )
+
+
+def test_grouped_mm_matches_packed_with_empty_experts():
+    torch.manual_seed(35)
+    packed = PackedExperts(16, 32, 4)
+    grouped = GroupedExperts(16, 32, 4)
+    grouped.load_state_dict(packed.state_dict())
+    offsets = torch.tensor([0, 2, 2, 5], dtype=torch.int32)
+    tokens = torch.randn(5, 16, requires_grad=True)
+    grouped_tokens = tokens.detach().clone().requires_grad_()
+    probe = torch.randn(5, 16)
+    expected = packed(tokens, offsets)
+    actual = grouped(grouped_tokens, offsets)
+    torch.testing.assert_close(actual, expected)
+    (actual * probe).sum().backward()
+    (expected * probe).sum().backward()
+    torch.testing.assert_close(grouped_tokens.grad, tokens.grad)
+    torch.testing.assert_close(grouped.up_weight.grad, packed.up_weight.grad)
+    torch.testing.assert_close(grouped.down_weight.grad, packed.down_weight.grad)

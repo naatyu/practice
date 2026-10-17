@@ -1,9 +1,10 @@
 import math
+from typing import Literal
 
 import torch
 from torch import nn
 
-from moe import TopKRouter
+from .router import TopKRouter
 
 
 class PackedExperts(nn.Module):
@@ -28,7 +29,7 @@ class PackedExperts(nn.Module):
         nn.init.normal_(self.up_weight, mean=0.0, std=1 / math.sqrt(self.d_model))
         nn.init.normal_(self.down_weight, mean=0.0, std=1 / math.sqrt(self.hidden_dim))
 
-    def forward(
+    def forward(  # ty: ignore[invalid-mutable-override]
         self, grouped_tokens: torch.Tensor, offsets: torch.Tensor
     ) -> torch.Tensor:
         """Process token assignments already grouped by expert.
@@ -55,20 +56,76 @@ class PackedExperts(nn.Module):
         return output
 
 
+class GroupedExperts(nn.Module):
+    """Packed bias-free SwiGLU experts: E experts, model width D, hidden width F."""
+
+    def __init__(self, d_model: int, hidden_dim: int, num_experts: int):
+        super().__init__()
+        self.d_model = d_model
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.up_weight = nn.Parameter(
+            torch.empty(num_experts, d_model, 2 * hidden_dim)
+        )  # [E, D, 2F]
+        self.down_weight = nn.Parameter(
+            torch.empty(num_experts, hidden_dim, d_model)
+        )  # [E, F, D]
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Use zero-mean normal weights with std = 1/sqrt(projection fan-in)."""
+        nn.init.normal_(self.up_weight, mean=0.0, std=1 / math.sqrt(self.d_model))
+        nn.init.normal_(self.down_weight, mean=0.0, std=1 / math.sqrt(self.hidden_dim))
+
+    def forward(  # ty: ignore[invalid-mutable-override]
+        self, grouped_tokens: torch.Tensor, offsets: torch.Tensor
+    ) -> torch.Tensor:
+        """Process token assignments already grouped by expert.
+
+        grouped_tokens: [N, D], N = B*S*K assignments before any dropping.
+        offsets: [E], cumulative exclusive ends; counts [2, 0, 3] -> [2, 2, 5].
+
+        Returns [N, D] in grouped order, before router weighting and combining.
+        Assumes valid nondecreasing offsets ending at N.
+        """
+        up = nn.functional.grouped_mm(
+            grouped_tokens, self.up_weight, offs=offsets
+        )  # [N, 2F]
+        value, gate = torch.chunk(up, 2, dim=-1)  # [N, F], [N, F]
+        hidden = value * nn.functional.silu(gate)  # [N, F]
+        output = nn.functional.grouped_mm(
+            hidden, self.down_weight, offs=offsets
+        )  # [N, D]
+
+        return output
+
+
 class GroupedMoE(nn.Module):
     """Route, group, process, and combine assignments using packed expert weights."""
 
-    def __init__(self, d_model: int, hidden_dim: int, num_experts: int, top_k: int):
+    def __init__(
+        self,
+        d_model: int,
+        hidden_dim: int,
+        num_experts: int,
+        top_k: int,
+        *,
+        expert_backend: Literal["loop", "grouped_mm"] = "grouped_mm",
+    ):
         super().__init__()
+        if expert_backend not in ("loop", "grouped_mm"):
+            raise ValueError(f"Unknown expert backend: {expert_backend!r}")
         self.router = TopKRouter(d_model, num_experts, top_k)
-        self.experts = PackedExperts(d_model, hidden_dim, num_experts)
+        expert_cls = PackedExperts if expert_backend == "loop" else GroupedExperts
+        self.experts = expert_cls(d_model, hidden_dim, num_experts)
 
         self.d_model = d_model
         self.hidden_dim = hidden_dim
         self.num_experts = num_experts
         self.top_k = top_k
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
         """
         x: [B, S, D]
         T = B * S
@@ -91,7 +148,7 @@ class GroupedMoE(nn.Module):
         expert_counts = torch.bincount(
             flat_expert_ids, minlength=self.num_experts
         )  # [E]
-        offsets = expert_counts.cumsum(dim=0)  # [E]
+        offsets = expert_counts.cumsum(dim=0, dtype=torch.int32)  # [E]
 
         # Process expert groups
         grouped_output = self.experts(grouped_tokens, offsets)  # [T * K, D]

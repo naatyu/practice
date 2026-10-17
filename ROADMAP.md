@@ -11,8 +11,10 @@ retention, low-rank projections, and per-head rate initialization. The tested
 chunkwise operator is explicitly AI-authored teaching material; recurrence
 remains the default. Optimized WY kernels are outside the completed scope.
 The learner chose MoE as the next active track. Routing, naive and expert-batched
-MoE, packed weights, and sorted dispatch/combine are implemented and tested.
-Resume at grouped GEMM; see `moe/README.md` for the exact pending question.
+MoE, packed weights, and grouped-GEMM dispatch/combine are implemented and
+tested on CPU, with a reproducible comparison in `moe/SOLUTIONS.md`.
+Dense/MoE decoder integration is complete and tested. Resume with a tiny
+training run and routing diagnostics; see `moe/README.md` for the pending question.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -310,8 +312,8 @@ written; the implementation file remains intentionally empty.
 1. MoE fundamentals: experts, sparsity, and active compute — done
 2. Naive top-k routing and weighted expert combination — done
 3. Expert-wise token dispatch and output accumulation — done; packed weights
-   and sorted dispatch/combine also tested, grouped GEMM next
-4. Decoder integration, training, and routing diagnostics
+   and selectable loop/grouped-MM execution tested on CPU and benchmarked
+4. Decoder integration — done; tiny training run and routing diagnostics next
 5. Auxiliary load-balancing loss
 6. Expert capacity, overflow, and dropless routing
 7. Router numerical stability and z-loss
@@ -323,8 +325,9 @@ written; the implementation file remains intentionally empty.
 13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 The learner implements; the assistant interviews, reviews, writes tests, and
-records corrected reasoning. Last checked: 35 MoE tests pass. Session handoff
-and the unanswered grouped-GEMM question are in `moe/README.md` and
+records corrected reasoning. Last checked: 74 focused tests pass across MoE,
+Transformer block, decoder, and training. Session handoff
+and CPU benchmark results are in `moe/README.md` and
 `moe/SOLUTIONS.md`.
 
 ### 24. Fine-tuning
@@ -371,7 +374,7 @@ and the unanswered grouped-GEMM question are in `moe/README.md` and
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: grouped GEMM next]
+-> MoE [active: tiny training run and routing diagnostics next]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

@@ -1,5 +1,8 @@
+import pytest
 import torch
 
+from mlp import SwiGLU
+from moe import GroupedMoE
 from positional_encoding import RotaryPositionalEncoding
 from transformer_block import TransformerBlock
 
@@ -66,3 +69,45 @@ def test_cached_block_matches_full_block_suffix():
     )
     assert updated_cache[0].shape[-2] == x.shape[1]
     assert updated_cache[1].shape[-2] == x.shape[1]
+
+
+def test_dense_ffn_remains_the_default():
+    block = TransformerBlock(d_model=16, num_heads=2, hidden_dim=32)
+    assert isinstance(block.ffn, SwiGLU)
+
+
+def test_moe_block_selects_requested_expert_configuration():
+    block = TransformerBlock(
+        d_model=16, num_heads=2, hidden_dim=32, num_experts=4, top_k=2
+    )
+    assert isinstance(block.ffn, GroupedMoE)
+    assert block.ffn.num_experts == 4
+    assert block.ffn.top_k == 2
+    x = torch.randn(2, 5, 16)
+    assert block(x).shape == x.shape
+
+
+def test_moe_block_requires_top_k():
+    with pytest.raises(ValueError, match="Top K"):
+        TransformerBlock(d_model=16, num_heads=2, hidden_dim=32, num_experts=4)
+
+
+def test_moe_block_preserves_causality():
+    torch.manual_seed(36)
+    block = TransformerBlock(
+        d_model=16, num_heads=2, hidden_dim=32, num_experts=4, top_k=2
+    ).eval()
+    x = torch.randn(2, 6, 16)
+    changed_future = x.clone()
+    changed_future[:, 3:] += 10
+    with torch.inference_mode():
+        expected = block(x)
+        actual = block(changed_future)
+    torch.testing.assert_close(actual[:, :3], expected[:, :3])
+
+
+def test_legacy_positional_eps_is_preserved():
+    block = TransformerBlock(16, 2, 32, None, 0.0, None, None, 1e-5)
+    assert isinstance(block.ffn, SwiGLU)
+    assert block.norm1.eps == 1e-5
+    assert block.norm2.eps == 1e-5

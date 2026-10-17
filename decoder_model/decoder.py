@@ -21,6 +21,8 @@ class DecoderModel(nn.Module):
         dropout_p: float = 0.0,
         rope_base: float = 10_000,
         window_size: int | None = None,
+        num_experts: int | None = None,
+        top_k: int | None = None,
         *,
         tie_weights: bool = True,
     ):
@@ -54,6 +56,8 @@ class DecoderModel(nn.Module):
                     dropout_p=self.dropout_p,
                     rope=self.rope,
                     window_size=self.window_size,
+                    num_experts=num_experts,
+                    top_k=top_k,
                 )
                 for _ in range(n_layers)
             ]
