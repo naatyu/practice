@@ -114,9 +114,8 @@ def generate_sampled(
         return input_ids
 
     # Prefill phase
-    prefill_logits, kv_caches = model(
-        input_ids, use_cache=True
-    )  # [B, S, V], [([B, H, S, D], [B, H, S, D])] * n_layer
+    output = model(input_ids, use_cache=True)
+    prefill_logits, kv_caches = output.logits, output.kv_caches
     next_logits = prefill_logits[:, -1, :]
     next_logits = apply_repetition_penalty(next_logits, input_ids, repetition_penalty)
     first_token, _ = sample_next_token(
@@ -135,9 +134,10 @@ def generate_sampled(
             return current_generation
 
     for _ in range(max_new_tokens - 1):
-        logits, kv_caches = model(
+        output = model(
             current_generation[:, -1].unsqueeze(-1), use_cache=True, kv_caches=kv_caches
         )  # [B, 1, V]
+        logits, kv_caches = output.logits, output.kv_caches
         next_logits = logits.squeeze(1)
         next_logits = apply_repetition_penalty(
             next_logits, current_generation, repetition_penalty

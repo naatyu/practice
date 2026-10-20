@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from cross_entropy import CrossEntropy
-from decoder_model import DecoderModel
+from decoder_model import DecoderModel, DecoderOutput
 from training import train_accumulation_step, train_step
 
 
@@ -16,8 +16,10 @@ class FixedLogitModel(nn.Module):
         super().__init__()
         self.logits = nn.Parameter(torch.randn(seq_len, vocab_size))
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.logits.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
+    def forward(self, input_ids: torch.Tensor) -> DecoderOutput:
+        return DecoderOutput(
+            self.logits.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
+        )
 
 
 class RecordingCrossEntropy(nn.Module):
@@ -33,6 +35,58 @@ class RecordingCrossEntropy(nn.Module):
         return self.loss(logits, targets)
 
 
+class AuxiliaryModel(FixedLogitModel):
+    def __init__(self):
+        super().__init__(seq_len=4, vocab_size=5)
+        self.aux_parameter = nn.Parameter(torch.tensor(2.0))
+
+    def forward(self, input_ids: torch.Tensor) -> DecoderOutput:
+        output = super().forward(input_ids)
+        output.aux_loss = self.aux_parameter.square()
+        return output
+
+
+@pytest.mark.parametrize("coefficient", [0.0, 0.25])
+def test_train_step_combines_losses_and_scales_auxiliary_gradients(coefficient):
+    model = AuxiliaryModel()
+    tokens = torch.tensor([[0, 1, 2, 3]])
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    result = train_step(
+        model,
+        optimizer,
+        tokens,
+        tokens,
+        CrossEntropy(),
+        aux_loss_coefficient=coefficient,
+    )
+    assert result.aux_loss is not None
+    torch.testing.assert_close(result.aux_loss, torch.tensor(4.0))
+    torch.testing.assert_close(
+        result.loss, result.task_loss + coefficient * result.aux_loss
+    )
+    torch.testing.assert_close(
+        model.aux_parameter, torch.tensor(2.0 - 0.1 * coefficient * 4.0)
+    )
+    for value in (result.loss, result.task_loss, result.aux_loss):
+        assert not value.requires_grad and value.grad_fn is None
+
+
+def test_accumulation_scales_both_task_and_auxiliary_losses():
+    model = AuxiliaryModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    tokens = torch.tensor([[0, 1, 2, 3]])
+    result = train_accumulation_step(
+        model,
+        optimizer,
+        [(tokens, tokens)] * 4,
+        CrossEntropy(),
+        aux_loss_coefficient=0.25,
+    )
+    assert result.aux_loss is not None
+    torch.testing.assert_close(result.loss, result.task_loss + 0.25 * result.aux_loss)
+    torch.testing.assert_close(model.aux_parameter, torch.tensor(1.9))
+
+
 def test_train_step_shifts_data_updates_parameters_and_detaches_loss() -> None:
     torch.manual_seed(0)
     batch_size, seq_len, vocab_size = 2, 4, 5
@@ -44,7 +98,7 @@ def test_train_step_shifts_data_updates_parameters_and_detaches_loss() -> None:
     loss_fn = RecordingCrossEntropy()
     parameters_before = model.logits.detach().clone()
 
-    loss = train_step(model, optimizer, input_ids, labels, loss_fn)
+    loss = train_step(model, optimizer, input_ids, labels, loss_fn).loss
 
     assert loss_fn.logits_shape == (batch_size, seq_len - 1, vocab_size)
     torch.testing.assert_close(loss_fn.targets, labels[:, 1:])
@@ -113,9 +167,9 @@ def test_tiny_decoder_overfits_one_sequence() -> None:
     input_ids = torch.tensor([[0, 1, 2, 3, 4, 5]])
     labels = input_ids.clone()
 
-    first_loss = train_step(model, optimizer, input_ids, labels, loss_fn)
+    first_loss = train_step(model, optimizer, input_ids, labels, loss_fn).loss
     for _ in range(59):
-        final_loss = train_step(model, optimizer, input_ids, labels, loss_fn)
+        final_loss = train_step(model, optimizer, input_ids, labels, loss_fn).loss
 
     assert final_loss < first_loss * 0.01
     assert final_loss < 0.02
@@ -146,7 +200,9 @@ def test_gradient_accumulation_matches_one_concatenated_batch() -> None:
         CrossEntropy(),
     )
 
-    torch.testing.assert_close(accumulated_loss, full_batch_loss)
+    torch.testing.assert_close(accumulated_loss.loss, full_batch_loss.loss)
+    torch.testing.assert_close(accumulated_loss.task_loss, full_batch_loss.task_loss)
+    assert accumulated_loss.aux_loss is full_batch_loss.aux_loss is None
     torch.testing.assert_close(accumulated_model.logits, full_batch_model.logits)
 
 

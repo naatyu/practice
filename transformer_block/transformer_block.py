@@ -51,13 +51,17 @@ class TransformerBlock(nn.Module):
         *,
         use_cache: bool = False,
         position_offset: int | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    ) -> tuple[
+        torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None, torch.Tensor | None
+    ]:
         """Transform x [B, Q, d_model].
 
         Optional per-layer cache: (K, V), each
         [B, num_kv_heads, K, d_head]. Output has x's shape and, when
         requested, an updated cache with the same leading dimensions.
+        Always returns (hidden states, optional cache, optional auxiliary loss).
         """
+        updated_cache = None
         if use_cache:
             attn_output, updated_cache = self.attn(
                 self.norm1(x),
@@ -71,8 +75,9 @@ class TransformerBlock(nn.Module):
             x_attn = x + self.attn(
                 self.norm1(x), causal=True, position_offset=position_offset
             )
-        x_ffn = x_attn + self.ffn(self.norm2(x_attn))
-
-        if use_cache:
-            return x_ffn, updated_cache
-        return x_ffn
+        if isinstance(self.ffn, GroupedMoE):
+            ffn_output, aux_loss = self.ffn(self.norm2(x_attn))
+        else:
+            ffn_output = self.ffn(self.norm2(x_attn))
+            aux_loss = None
+        return x_attn + ffn_output, updated_cache, aux_loss

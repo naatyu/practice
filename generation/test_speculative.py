@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from decoder_model import DecoderModel
+from decoder_model import DecoderCache, DecoderModel, DecoderOutput
 from generation import generate_sampled
 from generation.speculative import (
     generate_sampled_speculative,
@@ -20,14 +20,15 @@ class OffsetDecoder(nn.Module):
         self.offset = offset
         self.seen_inputs: list[torch.Tensor] = []
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor) -> DecoderOutput:
         self.seen_inputs.append(input_ids.clone())
         next_ids = (input_ids + self.offset) % self.vocab_size
-        return torch.zeros(
+        logits = torch.zeros(
             *input_ids.shape,
             self.vocab_size,
             device=input_ids.device,
         ).scatter_(-1, next_ids.unsqueeze(-1), 1.0)
+        return DecoderOutput(logits)
 
 
 class CachedBatchOffsetDecoder(nn.Module):
@@ -44,10 +45,10 @@ class CachedBatchOffsetDecoder(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        kv_caches: DecoderCache | None = None,
         *,
         use_cache: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> DecoderOutput:
         assert use_cache
         self.seen_input_lengths.append(input_ids.shape[-1])
         next_ids = (input_ids + self.offsets[:, None]) % self.vocab_size
@@ -67,7 +68,9 @@ class CachedBatchOffsetDecoder(nn.Module):
             cached_ids = torch.cat((previous_ids, input_ids), dim=-1)
 
         cache = cached_ids[:, None, :, None]
-        return logits, [(cache, cache.clone())]
+        return DecoderOutput(
+            logits, DecoderCache([(cache, cache.clone())], cached_ids.shape[-1])
+        )
 
 
 def test_single_speculative_round_accepts_all_proposals_and_bonus() -> None:

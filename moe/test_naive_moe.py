@@ -16,7 +16,7 @@ class FixedRouter(TopKRouter):
     def forward(self, x):
         ids = torch.tensor([[[0, 2], [1, 0]]], device=x.device)
         weights = x.new_tensor([[[0.25, 0.75], [0.6, 0.4]]])
-        return ids, weights
+        return ids, weights, None
 
 
 class RecordingExpert(nn.Module):
@@ -25,7 +25,7 @@ class RecordingExpert(nn.Module):
         self.scale = scale
         self.inputs = []
 
-    def forward(self, x):  # ty: ignore[invalid-mutable-override]
+    def forward(self, x):
         self.inputs.append(x.detach().clone())
         return self.scale * x
 
@@ -37,7 +37,7 @@ def test_controlled_routing_weights_and_original_token_inputs():
     model.experts = nn.ModuleList(recording_experts)
     x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
 
-    output = model(x)
+    output, _ = model(x)
 
     # Token 0: (.25*2 + .75*4)*x = 3.5*x.
     # Token 1: (.6*(-1) + .4*2)*x = .2*x.
@@ -56,8 +56,8 @@ def test_matches_dense_reference_outputs_and_gradients(top_k):
     x = torch.randn(2, 3, 3, dtype=torch.float64, requires_grad=True)
     inputs = (x, *model.parameters())
 
-    actual = model(x)
-    ids, weights = model.router(x)
+    actual, _ = model(x)
+    ids, weights, _ = model.router(x)
     # Evaluating every expert is acceptable only in this small test reference.
     all_outputs = torch.stack([expert(x) for expert in model.experts], dim=-2)
     selected = all_outputs.gather(

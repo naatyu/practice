@@ -29,7 +29,7 @@ class PackedExperts(nn.Module):
         nn.init.normal_(self.up_weight, mean=0.0, std=1 / math.sqrt(self.d_model))
         nn.init.normal_(self.down_weight, mean=0.0, std=1 / math.sqrt(self.hidden_dim))
 
-    def forward(  # ty: ignore[invalid-mutable-override]
+    def forward(
         self, grouped_tokens: torch.Tensor, offsets: torch.Tensor
     ) -> torch.Tensor:
         """Process token assignments already grouped by expert.
@@ -78,7 +78,7 @@ class GroupedExperts(nn.Module):
         nn.init.normal_(self.up_weight, mean=0.0, std=1 / math.sqrt(self.d_model))
         nn.init.normal_(self.down_weight, mean=0.0, std=1 / math.sqrt(self.hidden_dim))
 
-    def forward(  # ty: ignore[invalid-mutable-override]
+    def forward(
         self, grouped_tokens: torch.Tensor, offsets: torch.Tensor
     ) -> torch.Tensor:
         """Process token assignments already grouped by expert.
@@ -125,7 +125,7 @@ class GroupedMoE(nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
         x: [B, S, D]
         T = B * S
@@ -134,7 +134,9 @@ class GroupedMoE(nn.Module):
         """
 
         # Token routing
-        expert_ids, expert_weights = self.router(x)  # [B, S, K], [B, S, K]
+        expert_ids, expert_weights, aux_loss = self.router(
+            x
+        )  # [B, S, K], [B, S, K], scalar
 
         tokens = x.reshape(-1, self.d_model)  # [T, D]
         flat_expert_ids = expert_ids.flatten()  # [T * K]
@@ -161,7 +163,7 @@ class GroupedMoE(nn.Module):
         output = torch.zeros_like(tokens)  # [T, D]
         output.index_add_(dim=0, index=token_indices, source=weighted_output)  # [T, D]
 
-        return output.reshape_as(x)  # [B, S, D]
+        return output.reshape_as(x), aux_loss  # [B, S, D], scalar or None
 
 
 if __name__ == "__main__":

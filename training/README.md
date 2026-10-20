@@ -24,7 +24,7 @@ cross-entropy `ignore_index`. The function must:
 - Run backward propagation.
 - Optionally clip the global gradient norm.
 - Perform one optimizer update.
-- Return a detached loss for reporting.
+- Return detached total/task/auxiliary loss details for reporting (`TrainingLoss`).
 
 ### Discussion questions
 
@@ -82,13 +82,30 @@ uv run --extra plots python -m training.train_moe
 
 `train_moe.py` reuses `train_step` on one fixed batch, without gradient accumulation.
 It records loss and all seven router metrics per layer, then resets statistics
-once per optimizer step. `plot_metrics` saves summary curves to
-`training/plots/moe_metrics.png` and per-layer expert curves to
-`training/plots/moe_metrics_experts.png` (both ignored by Git).
+once per optimizer step. `plot_metrics` appends the training setting to filenames:
+`moe_metrics_no_aux.png` / `moe_metrics_no_aux_experts.png` for the baseline,
+or `moe_metrics_aux_0.01.png` / `moe_metrics_aux_0.01_experts.png` for coefficient
+0.01, under `training/plots/`. The setting also appears in figure titles.
 Expert colors are consistent across panels; dashed lines mark equal shares.
-Use `--steps`, `--device`, or `--output` to change the run.
+Use `--steps`, `--device`, or `--output` to change the run. `--output` specifies
+the base path; the training-setting suffix is added even for custom names.
+
+The decoder returns `DecoderOutput`; both training helpers consume its logits
+and optional live auxiliary loss. They backpropagate
+`task_loss + aux_loss_coefficient * aux_loss` and return detached `TrainingLoss`
+fields (`loss`, `task_loss`, `aux_loss`). The coefficient defaults to zero.
+For a balancing experiment, for example:
+
+```bash
+uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --output training/plots/moe_balanced.png
+```
+
+The plot distinguishes total, task, and unweighted auxiliary loss. Compare with
+the zero-coefficient baseline; an auxiliary reference of 1 is not a task-loss target.
 
 The learner wrote the initial script; Codex added logging, plotting, tests,
 and training fixes. The default uses top-2 routing so normalized selected
-weights can train the router through task loss. No balancing loss is added yet.
+weights can train the router through task loss. The learner implemented the
+balancing formula; Codex added explicit loss returns, training integration,
+and updated generation callers/tests. The tiny run still has no gradient accumulation.
 

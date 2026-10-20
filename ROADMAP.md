@@ -15,8 +15,10 @@ MoE, packed weights, and grouped-GEMM dispatch/combine are implemented and
 tested on CPU, with a reproducible comparison in `moe/SOLUTIONS.md`.
 Dense/MoE decoder integration and seven routing diagnostics are implemented and
 tested. A tiny training runner now logs/plots per-layer diagnostics and resets
-once per optimizer step. Resume by interpreting its curves, then introducing
-auxiliary load-balancing loss; see `moe/README.md` for the checkpoint.
+once per optimizer step. Auxiliary load-balancing loss and explicit loss returns
+are implemented and integrated into training. Coefficient experiments and their
+balance/task-loss tradeoffs have been discussed. Resume with expert capacity,
+overflow, and dropless routing; see `moe/README.md` for the checkpoint.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -315,10 +317,9 @@ written; the implementation file remains intentionally empty.
 2. Naive top-k routing and weighted expert combination — done
 3. Expert-wise token dispatch and output accumulation — done; packed weights
    and selectable loop/grouped-MM execution tested on CPU and benchmarked
-4. Decoder integration and routing diagnostics — done; tiny training runner and
-   plots available, interpret results next
-5. Auxiliary load-balancing loss
-6. Expert capacity, overflow, and dropless routing
+4. Decoder integration, tiny training run, and routing diagnostics — done
+5. Auxiliary load-balancing loss — done, including coefficient experiments
+6. Expert capacity, overflow, and dropless routing — active
 7. Router numerical stability and z-loss
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
@@ -401,7 +402,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: interpret training diagnostics, then balancing loss]
+-> MoE [active: expert capacity, overflow, and dropless routing]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

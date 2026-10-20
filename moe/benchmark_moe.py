@@ -17,9 +17,7 @@ def make_models(d_model: int, hidden_dim: int, num_experts: int, top_k: int):
     reference = ExpertBatchedMoe(d_model, hidden_dim, num_experts, top_k)
     naive = NaiveMoe(d_model, hidden_dim, num_experts, top_k)
     naive.load_state_dict(reference.state_dict())
-    packed = GroupedMoE(
-        d_model, hidden_dim, num_experts, top_k, expert_backend="loop"
-    )
+    packed = GroupedMoE(d_model, hidden_dim, num_experts, top_k, expert_backend="loop")
     grouped = GroupedMoE(
         d_model, hidden_dim, num_experts, top_k, expert_backend="grouped_mm"
     )
@@ -56,7 +54,8 @@ def measure(
     def forward_backward():
         model.zero_grad(set_to_none=True)
         x.grad = None
-        model(x).square().mean().backward()
+        output, _ = model(x)
+        output.square().mean().backward()
 
     run = forward_backward if backward else forward
     run()  # Warm up before Timer's own calibration.
@@ -80,9 +79,13 @@ def main() -> None:
         f"CPU float32; {args.threads} thread(s); seed 42",
         flush=True,
     )
-    print("End-to-end medians in ms; routing, dispatch, weighting, and combine included.")
+    print(
+        "End-to-end medians in ms; routing, dispatch, weighting, and combine included."
+    )
     print("Backward includes forward, squared-mean loss, gradient reset, and backward.")
-    print("| T | D | F | E | K | Mode | Naive | Expert-batched | Packed loop | Grouped MM |")
+    print(
+        "| T | D | F | E | K | Mode | Naive | Expert-batched | Packed loop | Grouped MM |"
+    )
     print("|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|")
     largest_relative_iqr = 0.0
     cases = [(1, 64, 128), (32, 64, 128), (256, 128, 256)]

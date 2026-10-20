@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 
+from moe.losses import load_balancing_loss
+
 from .metrics import (
     assignment_entropy,
     assignment_fraction,
@@ -80,30 +82,36 @@ class TopKRouter(nn.Module):
 
         return metrics
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         E = number of experts
         K = number of selected experts
         x: [B, S, D]
+        Returns IDs, weights [B, S, K], and a live scalar loss (None in eval).
         """
         router_scores = self.router(x)  # [B, S, E]
         router_scores = nn.functional.softmax(router_scores, dim=-1)  # [B, S, E]
+
         scores, experts = torch.topk(
             router_scores, k=self.top_k, dim=-1
         )  # [B, S, K], [B, S, K]
+
+        counts = torch.bincount(experts.flatten(), minlength=self.num_experts)  # [E]
+        aux_loss = load_balancing_loss(router_scores, counts) if self.training else None
+
         weights = scores / torch.sum(scores, dim=-1, keepdim=True)  # [B, S, K]
 
         if self.training:
             with torch.no_grad():
-                self.tokens_per_expert += torch.bincount(
-                    experts.flatten(), minlength=self.num_experts
-                )  # [E]
+                self.tokens_per_expert += counts
                 self.router_prob_sum += router_scores.float().sum(dim=(0, 1))  # [E]
                 self.num_tokens += x.shape[0] * x.shape[1]  # B*S
                 self.router_entropy_sum += router_entropy(router_scores.float()).sum()
                 self.selected_prob_mass_sum += scores.float().sum()
 
-        return experts, weights
+        return experts, weights, aux_loss
 
 
 if __name__ == "__main__":

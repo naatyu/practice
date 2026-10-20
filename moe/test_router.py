@@ -3,7 +3,35 @@
 import pytest
 import torch
 
+from moe.losses import load_balancing_loss
 from moe.router import TopKRouter
+
+
+def test_auxiliary_loss_uses_current_forward_not_accumulated_metrics():
+    router = TopKRouter(4, 4, 2).double()
+    with torch.no_grad():
+        router.router.weight.copy_(torch.eye(4, dtype=torch.float64))
+    router(torch.tensor([[[4.0, 3.0, 0.0, -1.0]]], dtype=torch.float64))
+    x = torch.tensor([[[0.0, -1.0, 4.0, 3.0]]], dtype=torch.float64)
+    ids, _, loss = router(x)
+    counts = ids.flatten().bincount(minlength=4)
+    assert loss is not None
+    torch.testing.assert_close(loss, load_balancing_loss(x.softmax(-1), counts))
+    assert router.tokens_per_expert.sum() == 4
+    loss.backward()
+    assert router.router.weight.grad is not None
+    assert router.router.weight.grad.abs().sum() > 0
+
+
+def test_evaluation_returns_no_auxiliary_loss():
+    router = TopKRouter(4, 4, 2)
+    x = torch.randn(2, 3, 4)
+    _, _, training_loss = router(x)
+    assert training_loss is not None and training_loss.requires_grad
+    router.eval()
+    assert router(x)[2] is None
+    router.train()
+    assert router(x)[2] is not training_loss
 
 
 @pytest.mark.parametrize("top_k", [1, 2, 4])
@@ -11,7 +39,8 @@ def test_shapes_ids_and_normalized_weights(top_k):
     torch.manual_seed(0)
     router = TopKRouter(d_model=6, num_experts=4, top_k=top_k)
 
-    expert_ids, weights = router(torch.randn(2, 5, 6))
+    expert_ids, weights, aux_loss = router(torch.randn(2, 5, 6))
+    assert aux_loss is not None and aux_loss.shape == () and aux_loss.requires_grad
 
     assert expert_ids.shape == weights.shape == (2, 5, top_k)
     assert expert_ids.dtype == torch.int64
@@ -32,13 +61,31 @@ def test_controlled_selection_and_weight_normalization():
     probabilities = torch.tensor(
         [[[0.1, 0.4, 0.2, 0.3], [0.5, 0.1, 0.25, 0.15]]], dtype=torch.float64
     )
-    expert_ids, weights = router(probabilities.log())
+    expert_ids, weights, _ = router(probabilities.log())
 
     torch.testing.assert_close(expert_ids, torch.tensor([[[1, 3], [0, 2]]]))
     torch.testing.assert_close(
         weights,
         torch.tensor([[[4 / 7, 3 / 7], [2 / 3, 1 / 3]]], dtype=torch.float64),
     )
+
+
+def test_assignment_counts_computed_once_per_forward(monkeypatch):
+    calls = []
+    original = torch.bincount
+
+    def capture(*args, **kwargs):
+        counts = original(*args, **kwargs)
+        calls.append(counts)
+        return counts
+
+    monkeypatch.setattr(torch, "bincount", capture)
+    router = TopKRouter(d_model=6, num_experts=4, top_k=2)
+    x = torch.randn(2, 5, 6)
+    router(x)
+    router(x)
+    assert len(calls) == 2
+    torch.testing.assert_close(router.tokens_per_expert, calls[0] + calls[1])
 
 
 @pytest.mark.parametrize("top_k", [0, -1, 5])
@@ -52,7 +99,7 @@ def test_top_two_weights_provide_router_gradients():
     router = TopKRouter(d_model=6, num_experts=4, top_k=2).double()
     x = torch.randn(2, 5, 6, dtype=torch.float64, requires_grad=True)
 
-    _, weights = router(x)
+    _, weights, _ = router(x)
     # Unequal expert outputs give a meaningful task signal. Summing weights
     # alone would be constant and could not test router learning.
     expert_outputs = torch.tensor([1.0, -2.0], dtype=torch.float64)
@@ -71,7 +118,7 @@ def test_normalized_top_one_has_no_router_gradient_from_mixing_weight():
     router = TopKRouter(d_model=6, num_experts=4, top_k=1).double()
     x = torch.randn(2, 5, 6, dtype=torch.float64, requires_grad=True)
 
-    _, weights = router(x)
+    _, weights, _ = router(x)
     torch.testing.assert_close(weights, torch.ones_like(weights))
     weights.sum().backward()
 
@@ -86,8 +133,8 @@ def test_normalized_top_one_has_no_router_gradient_from_mixing_weight():
 def test_assignment_counts_accumulate_across_microbatches():
     torch.manual_seed(3)
     router = TopKRouter(4, 5, 2).train()
-    first_ids, _ = router(torch.randn(2, 3, 4, requires_grad=True))
-    second_ids, _ = router(torch.randn(1, 2, 4, requires_grad=True))
+    first_ids, _, _ = router(torch.randn(2, 3, 4, requires_grad=True))
+    second_ids, _, _ = router(torch.randn(1, 2, 4, requires_grad=True))
     expected = torch.bincount(first_ids.flatten(), minlength=5)
     expected += torch.bincount(second_ids.flatten(), minlength=5)
     torch.testing.assert_close(router.tokens_per_expert, expected)
@@ -109,13 +156,13 @@ def test_eval_does_not_change_training_counts():
 def test_reset_clears_counts_in_place_without_changing_routing():
     router = TopKRouter(4, 5, 2).train()
     x = torch.randn(2, 3, 4)
-    expected_ids, expected_weights = router(x)
+    expected_ids, expected_weights, _ = router(x)
     original_buffers = dict(router.named_buffers())
     router.reset_metrics()
     for name, buffer in router.named_buffers():
         assert buffer is original_buffers[name]
         assert torch.count_nonzero(buffer).item() == 0
-    actual_ids, actual_weights = router(x)
+    actual_ids, actual_weights, _ = router(x)
     torch.testing.assert_close(actual_ids, expected_ids)
     torch.testing.assert_close(actual_weights, expected_weights)
     torch.testing.assert_close(
@@ -278,7 +325,7 @@ def test_selected_mass_uses_probabilities_before_renormalization(top_k, expected
     with torch.no_grad():
         router.router.weight.copy_(torch.eye(4))
     probabilities = torch.tensor([[[0.4, 0.3, 0.2, 0.1]]])
-    _, weights = router(probabilities.log())
+    _, weights, _ = router(probabilities.log())
     torch.testing.assert_close(weights.sum(-1), torch.ones(1, 1))
     torch.testing.assert_close(
         router.selected_prob_mass_sum, torch.tensor(expected_mass)

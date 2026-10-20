@@ -31,6 +31,73 @@ This is a consequence of our initial normalization policy, not a claim that all
 top-1 MoE routers are untrainable. Other policies retain the selected probability,
 and auxiliary router objectives provide separate gradients.
 
+## Why expert IDs do not carry gradients
+
+A derivative measures how an output changes under a tiny input change.
+For logits `[2.0, 1.0]`, the top-1 ID is 0. Moving the second logit to 1.01
+still returns 0: the selected ID is locally constant, so its derivative is zero.
+Once the second logit passes 2.0, the ID jumps to 1; at the tie boundary the
+selection is discontinuous and has no ordinary derivative. Thus hard selection
+has zero derivative away from boundaries and no derivative at the boundaries,
+not a useful gradient telling the router how to change its choices.
+
+PyTorch returns integer IDs without a gradient path. Removing `no_grad` does
+not change this: `topk` IDs -> `bincount` -> assignment fractions/MaxVio cannot
+train the router. Selected floating-point scores, however, retain gradients
+through the currently selected entries; this does not differentiate the choice
+of entries itself. Merely casting IDs to floats does not restore a gradient.
+
+Mean full router probabilities provide a differentiable signal when computed
+directly from the current forward pass. Our detached logging buffers do not:
+the balancing loss must use live probabilities, not `compute_metrics()`.
+Actual assignment fractions can serve as detached load measurements alongside
+that differentiable signal.
+
+## Auxiliary load-balancing loss
+
+The learner implemented `moe.losses.load_balancing_loss`. The assistant refactored
+its input to current-forward counts `[E]`, computed once in the router from
+selected IDs `[B, S, K]` and reused for logging. For full probabilities
+`[B, S, E]`, compute assignment fractions
+`f = counts / counts.sum()` and mean probabilities
+`p = probabilities.mean((0, 1))`, both `[E]`. Return `E * sum(f * p)`.
+Balanced assignment fractions give a reference loss of 1, not a guaranteed
+global minimum. Flattening IDs in the router is required by `bincount`; normalizing by all
+assignments avoids scaling the loss with batch size or K.
+
+Counts do not carry gradients, but full softmax probabilities do. An unused
+expert has zero direct coefficient in the sum, yet raising its logit takes
+probability away from busy experts through the shared softmax denominator.
+Thus its logit can receive a useful gradient even with zero assignments.
+Selected, renormalized weights omit this full-expert signal.
+
+Assistant-authored tests cover balanced top-1/top-2/all-expert routing, a hand
+calculation, unused experts, batch-repeat invariance, and logit gradients.
+Codex implemented the explicit-return plumbing at the learner's request:
+router -> (IDs, weights, auxiliary loss), MoE -> (hidden states, auxiliary loss),
+block -> (hidden states, optional cache, auxiliary loss), and decoder ->
+`DecoderOutput(logits, kv_caches, aux_loss)`. No loss is stored on modules.
+The loss field is None in evaluation or for dense models. Each MoE layer is
+balanced independently before scalar losses are averaged: pooling counts can
+hide opposite imbalances in separate layers.
+
+Training adds `coefficient * output.aux_loss` to task loss before backward and
+returns detached `TrainingLoss` details. The coefficient defaults to zero for
+the baseline and is exposed in `training.train_moe` as `--aux-loss-coefficient`.
+Generation now reads the named logits/cache fields. Tests cover layer averaging,
+auxiliary gradients, eval/dense outputs, coefficient scaling, and loss logging.
+A layer's balancing objective can also update upstream layers through its
+hidden inputs; it does not directly depend on its own expert outputs.
+The learner correctly explained the coefficient tradeoff: stronger balancing
+pressure can improve load balance at the expense of higher task loss, but neither
+perfect balance nor a task-loss penalty is guaranteed. The fixed-batch runs with
+coefficients 0, 0.05, and 0.5 were compared visually. The 0.5 run showed tighter
+assignment balance while still reaching near-zero task loss; it did not establish
+a quality penalty. Its total loss near 0.5 is expected from an unweighted auxiliary
+loss near 1, not evidence of failed memorization. These single-batch experiments
+do not measure generalization. Auxiliary balancing is complete for this stage.
+Next: expert capacity and overflow, compared with the existing dropless dispatch.
+
 ## Naive weighted expert combination
 
 The MoE module registers its router and independent SwiGLU instances after

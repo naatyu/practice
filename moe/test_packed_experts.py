@@ -29,8 +29,9 @@ def test_grouped_outputs_and_gradients_match_reference(top_k, dtype):
     x_reference = torch.randn(2, 4, 3, dtype=dtype, requires_grad=True)
     x_grouped = x_reference.detach().clone().requires_grad_()
 
-    expected = reference(x_reference)
-    actual = grouped(x_grouped)
+    expected, expected_aux = reference(x_reference)
+    actual, actual_aux = grouped(x_grouped)
+    torch.testing.assert_close(actual_aux, expected_aux)
     assert actual.shape == x_grouped.shape
     torch.testing.assert_close(actual, expected)
     expected.square().sum().backward()
@@ -88,7 +89,7 @@ class FixedRouter(TopKRouter):
     def forward(self, x):
         ids = torch.tensor([[[1, 3], [3, 1]]], device=x.device)
         weights = x.new_tensor([[[0.25, 0.75], [0.6, 0.4]]])
-        return ids, weights
+        return ids, weights, None
 
 
 def test_controlled_weight_permutation_and_repeated_token_accumulation():
@@ -104,7 +105,7 @@ def test_controlled_weight_permutation_and_repeated_token_accumulation():
     hidden = hidden * torch.nn.functional.silu(hidden)
     expected_scales = x.new_tensor([[[3.5], [3.2]]])
     expected = (hidden * expected_scales).expand_as(x)
-    torch.testing.assert_close(grouped(x), expected)
+    torch.testing.assert_close(grouped(x)[0], expected)
 
 
 def test_packed_parameters_have_fan_in_scaled_normal_initialization():
@@ -143,12 +144,12 @@ def test_grouped_mm_outputs_and_gradients_match_expert_batched_reference(top_k):
     tokens = torch.randn(2, 3, 16)
     probe = torch.randn_like(tokens)
     reference_input = tokens.clone().requires_grad_()
-    expected = reference(reference_input)
+    expected, _ = reference(reference_input)
     (expected * probe).sum().backward()
 
     for model in (packed, grouped):
         x = tokens.clone().requires_grad_()
-        actual = model(x)
+        actual, _ = model(x)
         torch.testing.assert_close(actual, expected)
         (actual * probe).sum().backward()
         torch.testing.assert_close(x.grad, reference_input.grad)
@@ -165,7 +166,8 @@ def test_grouped_mm_outputs_and_gradients_match_expert_batched_reference(top_k):
                 model.experts.up_weight.grad[expert_id], expert.up_proj.weight.grad.T
             )
             torch.testing.assert_close(
-                model.experts.down_weight.grad[expert_id], expert.down_proj.weight.grad.T
+                model.experts.down_weight.grad[expert_id],
+                expert.down_proj.weight.grad.T,
             )
 
 

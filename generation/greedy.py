@@ -16,7 +16,7 @@ def generate_greedy_naive(
     )  # [B]
 
     for _ in range(max_new_tokens):
-        logits = model(current_generation)  # [B, S, V]
+        logits = model(current_generation).logits  # [B, S, V]
         generated_logits = logits[:, -1, :]  # [B, V], select only the last token
         generated_tokens = torch.argmax(
             generated_logits, dim=-1, keepdim=True
@@ -52,9 +52,8 @@ def generate_greedy(
         return input_ids
 
     # Prefill phase
-    prefill_logits, kv_caches = model(
-        input_ids, use_cache=True
-    )  # [B, S, V], [([B, H, S, D], [B, H, S, D])] * n_layer
+    output = model(input_ids, use_cache=True)
+    prefill_logits, kv_caches = output.logits, output.kv_caches
     first_token = torch.argmax(prefill_logits[:, -1, :], dim=-1, keepdim=True)  # [B, 1]
     current_generation = torch.cat((input_ids, first_token), dim=-1)  # [B, S+1]
 
@@ -65,9 +64,10 @@ def generate_greedy(
             return current_generation
 
     for _ in range(max_new_tokens - 1):
-        logits, kv_caches = model(
+        output = model(
             current_generation[:, -1].unsqueeze(-1), use_cache=True, kv_caches=kv_caches
         )  # [B, 1, V]
+        logits, kv_caches = output.logits, output.kv_caches
         next_tokens = torch.argmax(logits.squeeze(1), dim=-1, keepdim=True)  # [B, 1]
 
         if eos_token_id is not None:

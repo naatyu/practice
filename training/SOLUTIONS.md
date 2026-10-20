@@ -154,7 +154,7 @@ therefore normally uses both:
 ```python
 model.eval()
 with torch.no_grad():
-    logits = model(input_ids)
+    logits = model(input_ids).logits
 ```
 
 `torch.inference_mode()` is a stronger inference-only context that can remove
@@ -162,6 +162,14 @@ additional autograd bookkeeping but places more restrictions on tensors
 created within it.
 
 ## Tests
+
+The later MoE exercise changed the model API to `DecoderOutput` and the training
+helpers to detached `TrainingLoss(loss, task_loss, aux_loss)` results. Codex
+implemented this plumbing. Per-layer balancing losses are averaged by the
+decoder, then weighted once in training before backward; logging is detached
+only afterward. `train_accumulation_step` applies its microbatch scaling to
+both objectives. This is per-microbatch balancing, not global-batch balancing,
+and the tiny MoE runner uses the simpler single-batch `train_step`.
 
 The training tests verify:
 

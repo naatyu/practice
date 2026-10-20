@@ -64,17 +64,35 @@ def test_metrics_cover_full_batch_and_reset_each_step(small_config, monkeypatch)
     assert forward_calls == [(8, 8)] * (3 * small_config.n_layers)
 
 
-def test_plot_saves_all_metrics_without_modifying_history(small_config, tmp_path):
+def test_auxiliary_coefficient_is_applied_and_losses_logged_separately(small_config):
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=2, aux_loss_coefficient=0.01
+    )
+    for record in history:
+        assert record["loss"] == pytest.approx(
+            record["task_loss"] + 0.01 * record["aux_loss"]
+        )
+        assert math.isfinite(record["aux_loss"]) and record["aux_loss"] > 0
+
+
+@pytest.mark.parametrize("coefficient, tag", [(0.0, "no_aux"), (0.01, "aux_0.01")])
+def test_plot_saves_all_metrics_without_modifying_history(
+    small_config, tmp_path, coefficient, tag
+):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
-    history = train_moe(small_config, OptimizerConfig(), steps=2)
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=2, aux_loss_coefficient=coefficient
+    )
     saved = history[0]["layers"][0]["assignment_fraction"].clone()
     output = tmp_path / "plots" / "metrics.png"
     plot_metrics(history, output)
-    for path in (output, output.with_name("metrics_experts.png")):
+    for name in (f"metrics_{tag}.png", f"metrics_{tag}_experts.png"):
+        path = output.with_name(name)
         assert path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         assert path.stat().st_size > 1000
+    assert not output.exists()  # Keep different training settings in separate files.
     assert not plt.get_fignums()
     torch.testing.assert_close(history[0]["layers"][0]["assignment_fraction"], saved)

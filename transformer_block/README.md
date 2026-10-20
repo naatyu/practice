@@ -25,6 +25,11 @@ Input and output shape:
 (batch_size, sequence_length, d_model)
 ```
 
+The current API always returns `(hidden_states, kv_cache, aux_loss)`.
+Hidden states keep the shape above; cache is `None` unless requested, and
+auxiliary loss is `None` for dense FFNs or evaluation. Codex added this return
+plumbing for the later MoE exercise; the block's tensor computation is unchanged.
+
 ### Discussion questions
 
 1. What are the two main sublayers of a decoder Transformer block?

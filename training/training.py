@@ -1,6 +1,17 @@
+from dataclasses import dataclass
+
 import torch
 from torch import nn
 from torch.optim import Optimizer
+
+
+@dataclass
+class TrainingLoss:
+    """Detached total, task, and optional unweighted auxiliary losses for logging."""
+
+    loss: torch.Tensor
+    task_loss: torch.Tensor
+    aux_loss: torch.Tensor | None
 
 
 def train_step(
@@ -10,20 +21,25 @@ def train_step(
     labels: torch.Tensor,
     loss_fn: nn.Module,
     max_grad_norm: float | None = None,
-):
+    *,
+    aux_loss_coefficient: float = 0.0,
+) -> TrainingLoss:
     """Run one shifted language-model training step.
 
     Inputs: input_ids [B, S], labels [B, S]; the model returns
-    logits [B, S, vocab_size]. Output: scalar detached loss.
+    DecoderOutput with logits [B, S, vocab_size]. Returns detached loss details.
     """
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
-    logits = model(input_ids)
-    shifted_logits = logits[:, :-1, :]
+    output = model(input_ids)
+    shifted_logits = output.logits[:, :-1, :]
     shifted_labels = labels[:, 1:]
 
-    loss = loss_fn(shifted_logits, shifted_labels)
+    task_loss = loss_fn(shifted_logits, shifted_labels)
+    loss = task_loss
+    if output.aux_loss is not None:
+        loss = loss + aux_loss_coefficient * output.aux_loss
     loss.backward()
 
     if max_grad_norm is not None:
@@ -31,7 +47,11 @@ def train_step(
 
     optimizer.step()
 
-    return loss.detach()
+    return TrainingLoss(
+        loss.detach(),
+        task_loss.detach(),
+        output.aux_loss.detach() if output.aux_loss is not None else None,
+    )
 
 
 def train_accumulation_step(
@@ -40,11 +60,14 @@ def train_accumulation_step(
     microbatches: list[tuple[torch.Tensor, torch.Tensor]],
     loss_fn: nn.Module,
     max_grad_norm: float | None = None,
-):
+    *,
+    aux_loss_coefficient: float = 0.0,
+) -> TrainingLoss:
     """Accumulate gradients over shifted language-model microbatches.
 
     Input: microbatches of (input_ids [B_i, S], labels [B_i, S]);
-    the model returns logits [B_i, S, vocab_size]. Output: scalar loss.
+    the model returns DecoderOutput. Returns detached mean loss details.
+    Auxiliary balancing is computed per microbatch, not across the full batch.
     """
     if not microbatches:
         raise ValueError("Expected at least one microbatch.")
@@ -52,21 +75,32 @@ def train_accumulation_step(
     optimizer.zero_grad(set_to_none=True)
     num_microbatches = len(microbatches)
 
-    microbatch_loss = 0
+    microbatch_losses = []
+    task_losses = []
+    aux_losses = []
 
     for input_ids, labels in microbatches:
-        logits = model(input_ids)
-        shifted_logits = logits[:, :-1, :]
+        output = model(input_ids)
+        shifted_logits = output.logits[:, :-1, :]
         shifted_labels = labels[:, 1:]
 
-        loss = loss_fn(shifted_logits, shifted_labels)
+        task_loss = loss_fn(shifted_logits, shifted_labels)
+        loss = task_loss
+        if output.aux_loss is not None:
+            loss = loss + aux_loss_coefficient * output.aux_loss
+            aux_losses.append(output.aux_loss.detach())
         scaled_loss = loss / num_microbatches
         scaled_loss.backward()
-        microbatch_loss += scaled_loss.detach()
+        microbatch_losses.append(scaled_loss.detach())
+        task_losses.append(task_loss.detach())
 
     if max_grad_norm is not None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
     optimizer.step()
 
-    return microbatch_loss
+    return TrainingLoss(
+        torch.stack(microbatch_losses).sum(),
+        torch.stack(task_losses).mean(),
+        torch.stack(aux_losses).mean() if aux_losses else None,
+    )

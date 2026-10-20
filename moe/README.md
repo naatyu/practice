@@ -60,7 +60,9 @@ residual paths, and the existing dense default are preserved. The original
 positional `eps` argument remains in its original constructor position.
 
 The tiny training run now logs all seven diagnostics per layer and resets them
-once per optimizer step. No capacity limit, shared experts, or auxiliary losses yet.
+once per optimizer step. Auxiliary balancing loss is implemented and wired into
+training with a configurable coefficient (zero by default). No capacity limit
+or shared experts yet.
 
 ### Run and plot
 
@@ -68,12 +70,26 @@ once per optimizer step. No capacity limit, shared experts, or auxiliary losses 
 uv run --extra plots python -m training.train_moe
 ```
 
-The summary figure is saved to `training/plots/moe_metrics.png`: loss and per-layer
-scalar curves. `moe_metrics_experts.png` shows assignment/probability curves for
+The summary figure contains loss and per-layer scalar curves. Filenames include
+`_no_aux` or `_aux_<coefficient>` so different settings do not overwrite each other:
+for example, `training/plots/moe_metrics_aux_0.01.png`. The matching `_experts.png`
+figure shows assignment/probability curves for
 each expert, one row per layer, with dashed equal-share references. The learner
 wrote the initial script; Codex added logging, plotting, tests, and training fixes.
 A 100-step CPU run reduced fixed-batch loss from 12.60 to 3.21; this shows learning,
-not yet complete memorization. Next: interpret the curves, then balancing loss.
+not yet complete memorization at that checkpoint; the learner's later 800-step
+run reached near-zero loss. Coefficients 0.05 and 0.5 were subsequently compared;
+the stronger setting improved balance without an obvious fixed-batch task-loss penalty.
+
+The learner implemented the balancing formula. Codex added explicit loss returns
+through the router/MoE/block/decoder, updated generation callers, and integrated
+the weighted objective into training. The decoder always returns `DecoderOutput`;
+its auxiliary loss is averaged across MoE layers and is `None` during evaluation.
+Task, total, and unweighted auxiliary losses are logged separately. Example:
+
+```bash
+uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --output training/plots/moe_balanced.png
+```
 
 ### Routing metrics to learn
 
@@ -94,7 +110,7 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All five test files are assistant-authored. There are 85 passing MoE tests.
+All six test files are assistant-authored. There are 96 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
@@ -138,14 +154,18 @@ token count; no data yields zero. Tests cover K=1/2/E, unequal microbatches,
 autocast reduction, reset, and evaluation isolation.
 The tiny training run now logs these seven metrics separately per layer,
 reading and resetting once per optimizer step on one full batch (no gradient accumulation).
-Next: inspect its plots and discuss imbalance before implementing balancing loss.
+The learner has implemented the balancing loss and understands its gradient
+path through full softmax probabilities. Explicit per-layer loss returns and
+training integration are now assistant-authored. Coefficient experiments and
+their limitations have been discussed. Next: capacity/overflow, using existing
+dropless dispatch as the reference; do not repeat the completed loss plumbing.
 The learner asked to include practitioner metrics from frameworks and recent model reports.
 Do not repeat decoder integration or the implemented diagnostics.
 Keep explanations short and concrete; introduce one shape change at a time.
 The learner writes the implementation; the assistant writes tests and reviews.
 
-Last verification: 386 repo tests pass, including 85 MoE tests and three new
-training/logging/plotting tests. Targeted training Ruff/ty checks pass. Run
+Last verification: 405 repo tests pass, including 96 MoE tests.
+Targeted model/MoE/generation/training Ruff/ty checks pass. Run
 `uv run pytest moe transformer_block decoder_model training -q` when resuming.
 For debugging,
 use the reusable VS Code module launch with `moe.packed_experts`.

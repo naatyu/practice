@@ -165,7 +165,7 @@ def generate_single_sampled_speculative(
 
     # Generate draft tokens
     for _ in range(num_speculative_token):
-        logits = draft_model(draft_sequence)  # [S + N, V]
+        logits = draft_model(draft_sequence).logits  # [S + N, V]
         next_logits = logits[-1, :]  # [V]
         next_logits = apply_repetition_penalty(
             next_logits, draft_sequence, repetition_penalty
@@ -184,7 +184,7 @@ def generate_single_sampled_speculative(
     draft_tokens = torch.cat(draft_tokens, dim=-1)
     draft_probs = torch.stack(draft_probs, dim=0)
 
-    target_logits = model(draft_sequence)  # [S + N, V]
+    target_logits = model(draft_sequence).logits  # [S + N, V]
     verified_logits = target_logits[input_ids.shape[-1] - 1 :, :]  # [N + 1, V]
 
     penalized_target_logits = []
@@ -312,8 +312,10 @@ def generate_sampled_speculative_cached(
     if max_new_tokens == 0:
         return input_ids
 
-    target_prefill_logits, target_caches = model(input_ids, use_cache=True)
-    draft_prefill_logits, draft_caches = draft_model(input_ids, use_cache=True)
+    target_output = model(input_ids, use_cache=True)
+    draft_output = draft_model(input_ids, use_cache=True)
+    target_prefill_logits, target_caches = target_output.logits, target_output.kv_caches
+    draft_prefill_logits, draft_caches = draft_output.logits, draft_output.kv_caches
     if target_prefill_logits.shape[-1] != draft_prefill_logits.shape[-1]:
         raise ValueError("target and draft models must use the same vocabulary")
 
@@ -366,21 +368,26 @@ def generate_sampled_speculative_cached(
 
             proposed_tokens.append(next_tokens)
             proposed_probs.append(next_probs)
-            decoded_logits, draft_round_caches = draft_model(
+            draft_output = draft_model(
                 next_tokens,
                 kv_caches=draft_round_caches,
                 use_cache=True,
             )
-            round_draft_next_logits = decoded_logits[:, -1]
+            draft_round_caches = draft_output.kv_caches
+            round_draft_next_logits = draft_output.logits[:, -1]
 
         draft_tokens = torch.cat(proposed_tokens, dim=-1)  # [B, N]
         draft_probs = torch.stack(proposed_probs, dim=1)  # [B, N, V]
 
-        target_block_logits, target_round_caches = model(
+        target_output = model(
             draft_tokens,
             kv_caches=target_caches,
             use_cache=True,
         )  # [B, N, V]
+        target_block_logits, target_round_caches = (
+            target_output.logits,
+            target_output.kv_caches,
+        )
         verification_logits = torch.cat(
             (target_next_logits.unsqueeze(1), target_block_logits), dim=1
         )  # [B, N+1, V]
@@ -448,18 +455,19 @@ def generate_sampled_speculative_cached(
 
         # Recompute the final committed position. It may be a correction token
         # rather than the draft proposal stored in the speculative caches.
-        draft_last_logits, draft_caches = draft_model(
+        draft_output = draft_model(
             committed_tokens[:, -1:],
             kv_caches=draft_reusable_caches,
             use_cache=True,
         )
-        target_last_logits, target_caches = model(
+        target_output = model(
             committed_tokens[:, -1:],
             kv_caches=target_reusable_caches,
             use_cache=True,
         )
-        draft_next_logits = draft_last_logits[:, -1]
-        target_next_logits = target_last_logits[:, -1]
+        draft_caches, target_caches = draft_output.kv_caches, target_output.kv_caches
+        draft_next_logits = draft_output.logits[:, -1]
+        target_next_logits = target_output.logits[:, -1]
         current_generation = torch.cat((current_generation, committed_tokens), dim=-1)
 
         if eos_token_id is not None and finished.all():

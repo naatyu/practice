@@ -44,7 +44,7 @@ def test_output_shape(model_args):
         rope_base=model_args["rope_base"],
     )
 
-    assert model(input_ids).shape == (
+    assert model(input_ids).logits.shape == (
         batch_size,
         model_args["max_seq_len"],
         model_args["vocab_size"],
@@ -103,12 +103,16 @@ def test_cache_shapes_after_prefill(model_args, num_kv_heads):
     input_ids = torch.randint(0, model_args["vocab_size"], (batch_size, seq_len))
     model = DecoderModel(**model_args, num_kv_heads=num_kv_heads).eval()
 
-    logits, kv_caches = model(input_ids, use_cache=True)
+    output = model(input_ids, use_cache=True)
+    logits, kv_caches = output.logits, output.kv_caches
+    assert kv_caches is not None and output.aux_loss is None
 
     assert logits.shape == (batch_size, seq_len, model_args["vocab_size"])
     assert kv_caches.position == seq_len
     assert len(kv_caches) == model_args["n_layers"]
-    assert all(block.attn.num_kv_heads == model.num_kv_heads for block in model.blocks)
+    for block in model.blocks:
+        assert isinstance(block, TransformerBlock)
+        assert block.attn.num_kv_heads == model.num_kv_heads
     for k_cache, v_cache in kv_caches:
         expected_shape = (
             batch_size,
@@ -139,18 +143,22 @@ def test_token_by_token_cached_logits_match_full_forward(model_args, num_kv_head
     prompt_len = 4
     model = DecoderModel(**model_args, num_kv_heads=num_kv_heads).eval()
 
-    full_logits = model(input_ids)
+    full_logits = model(input_ids).logits
 
-    prompt_logits, kv_caches = model(input_ids[:, :prompt_len], use_cache=True)
+    output = model(input_ids[:, :prompt_len], use_cache=True)
+    prompt_logits, kv_caches = output.logits, output.kv_caches
+    assert kv_caches is not None
     cached_logits = [prompt_logits]
 
     for position in range(prompt_len, input_ids.shape[1]):
-        next_logits, kv_caches = model(
+        output = model(
             input_ids[:, position : position + 1],
             kv_caches=kv_caches,
             use_cache=True,
         )
-        cached_logits.append(next_logits)
+        kv_caches = output.kv_caches
+        assert kv_caches is not None
+        cached_logits.append(output.logits)
 
     cached_logits = torch.cat(cached_logits, dim=1)
 
@@ -176,8 +184,10 @@ def test_local_attention_uses_bounded_cache_and_absolute_positions(
         window_size=window_size,
     ).eval()
 
-    full_logits = model(input_ids)
-    prompt_logits, cache = model(input_ids[:, :prompt_len], use_cache=True)
+    full_logits = model(input_ids).logits
+    output = model(input_ids[:, :prompt_len], use_cache=True)
+    prompt_logits, cache = output.logits, output.kv_caches
+    assert cache is not None
     cached_logits = [prompt_logits]
 
     assert cache.position == prompt_len
@@ -186,12 +196,14 @@ def test_local_attention_uses_bounded_cache_and_absolute_positions(
         assert value_cache.shape[-2] == window_size
 
     for position in range(prompt_len, input_ids.shape[1]):
-        next_logits, cache = model(
+        output = model(
             input_ids[:, position : position + 1],
             kv_caches=cache,
             use_cache=True,
         )
-        cached_logits.append(next_logits)
+        cache = output.kv_caches
+        assert cache is not None
+        cached_logits.append(output.logits)
 
     cached_logits = torch.cat(cached_logits, dim=1)
 
@@ -215,7 +227,7 @@ def test_moe_decoder_registers_experts_in_every_layer_and_backpropagates():
         top_k=2,
     )
     input_ids = torch.randint(0, 32, (2, 6))
-    logits = model(input_ids)
+    logits = model(input_ids).logits
     assert logits.shape == (2, 6, 32)
     loss = torch.nn.functional.cross_entropy(
         logits[:, :-1].reshape(-1, 32), input_ids[:, 1:].reshape(-1)
@@ -255,13 +267,78 @@ def test_moe_decoder_cached_logits_match_full_forward(window_size):
     ).eval()
     input_ids = torch.randint(0, 32, (2, 7))
     with torch.inference_mode():
-        expected = model(input_ids)
-        prompt_logits, cache = model(input_ids[:, :3], use_cache=True)
+        expected = model(input_ids).logits
+        output = model(input_ids[:, :3], use_cache=True)
+        prompt_logits, cache = output.logits, output.kv_caches
+        assert cache is not None
         chunks = [prompt_logits]
         for position in range(3, input_ids.shape[1]):
-            logits, cache = model(
+            output = model(
                 input_ids[:, position : position + 1], kv_caches=cache, use_cache=True
             )
-            chunks.append(logits)
+            cache = output.kv_caches
+            assert cache is not None
+            chunks.append(output.logits)
     torch.testing.assert_close(torch.cat(chunks, dim=1), expected, atol=1e-5, rtol=1e-5)
     assert cache.position == input_ids.shape[1]
+
+
+def test_decoder_averages_live_losses_per_layer_and_auxiliary_only_gradients():
+    torch.manual_seed(39)
+    model = DecoderModel(
+        vocab_size=16,
+        d_model=16,
+        num_heads=2,
+        max_seq_len=8,
+        n_layers=3,
+        hidden_dim=32,
+        num_experts=4,
+        top_k=2,
+    )
+    layer_losses = []
+
+    def capture(_module, _args, output):
+        layer_losses.append(output[2])
+
+    handles = [block.register_forward_hook(capture) for block in model.blocks]
+    output = model(torch.randint(0, 16, (2, 6)))
+    for handle in handles:
+        handle.remove()
+    assert output.kv_caches is None
+    assert output.aux_loss is not None and output.aux_loss.requires_grad
+    assert len(layer_losses) == 3
+    torch.testing.assert_close(output.aux_loss, torch.stack(layer_losses).mean())
+    output.aux_loss.backward()
+    for block in model.blocks:
+        assert isinstance(block, TransformerBlock)
+        assert isinstance(block.ffn, GroupedMoE)
+        gradient = block.ffn.router.router.weight.grad
+        assert gradient is not None and gradient.abs().sum() > 0
+    # A layer's loss bypasses its own experts, but later router losses can
+    # backpropagate through earlier experts that produced their hidden inputs.
+    last_block = model.blocks[-1]
+    assert isinstance(last_block, TransformerBlock)
+    assert isinstance(last_block.ffn, GroupedMoE)
+    assert last_block.ffn.experts.up_weight.grad is None
+    assert last_block.ffn.experts.down_weight.grad is None
+
+
+@pytest.mark.parametrize("num_experts", [None, 4])
+def test_decoder_auxiliary_loss_is_absent_for_dense_or_eval(num_experts):
+    model = DecoderModel(
+        vocab_size=16,
+        d_model=16,
+        num_heads=2,
+        max_seq_len=8,
+        n_layers=2,
+        hidden_dim=32,
+        num_experts=num_experts,
+        top_k=2 if num_experts else None,
+    )
+    tokens = torch.randint(0, 16, (1, 4))
+    if num_experts is None:
+        assert model(tokens).aux_loss is None
+    model.eval()
+    output = model(tokens, use_cache=True)
+    assert output.aux_loss is None
+    assert output.kv_caches is not None and output.kv_caches.position == 4

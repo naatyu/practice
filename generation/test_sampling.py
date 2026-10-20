@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch import nn
 
-from decoder_model import DecoderModel
+from decoder_model import DecoderCache, DecoderModel, DecoderOutput
 from generation import (
     generate_greedy,
     generate_sampled,
@@ -38,10 +38,10 @@ class RecordingSamplingDecoder(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        kv_caches: DecoderCache | None = None,
         *,
         use_cache: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> DecoderOutput:
         self.seen_inputs.append(input_ids.clone())
         self.grad_enabled.append(torch.is_grad_enabled())
 
@@ -54,7 +54,7 @@ class RecordingSamplingDecoder(nn.Module):
 
         if not use_cache:
             assert kv_caches is None
-            return logits
+            return DecoderOutput(logits)
 
         if kv_caches is None:
             self.incoming_cache_lengths.append(0)
@@ -64,7 +64,10 @@ class RecordingSamplingDecoder(nn.Module):
             self.incoming_cache_lengths.append(previous_ids.shape[-1])
             cached_ids = torch.cat((previous_ids, input_ids), dim=-1)
 
-        return logits, [(cached_ids, cached_ids.clone())]
+        return DecoderOutput(
+            logits,
+            DecoderCache([(cached_ids, cached_ids.clone())], cached_ids.shape[-1]),
+        )
 
 
 class FixedPenaltyDecoder(nn.Module):
@@ -77,10 +80,10 @@ class FixedPenaltyDecoder(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        kv_caches: DecoderCache | None = None,
         *,
         use_cache: bool = False,
-    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> DecoderOutput:
         assert use_cache
         logits = torch.zeros(
             *input_ids.shape,
@@ -96,7 +99,10 @@ class FixedPenaltyDecoder(nn.Module):
         else:
             cached_ids = torch.cat((kv_caches[0][0], input_ids), dim=-1)
 
-        return logits, [(cached_ids, cached_ids.clone())]
+        return DecoderOutput(
+            logits,
+            DecoderCache([(cached_ids, cached_ids.clone())], cached_ids.shape[-1]),
+        )
 
 
 def test_repetition_penalty_is_sign_aware_and_batch_specific() -> None:

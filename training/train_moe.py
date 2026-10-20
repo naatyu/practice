@@ -46,6 +46,7 @@ def train_moe(
     *,
     steps: int = 100,
     device: str = "cpu",
+    aux_loss_coefficient: float = 0.0,
 ) -> list[dict]:
     """Overfit one fixed batch; record metrics once per optimizer step."""
     if steps < 1:
@@ -74,7 +75,15 @@ def train_moe(
 
     history = []
     for step in range(steps):
-        loss = train_step(model, optimizer, batch, batch, loss_fn, max_grad_norm=1.0)
+        losses = train_step(
+            model,
+            optimizer,
+            batch,
+            batch,
+            loss_fn,
+            max_grad_norm=1.0,
+            aux_loss_coefficient=aux_loss_coefficient,
+        )
         layer_metrics = [
             {
                 name: value.detach().cpu().clone()
@@ -82,14 +91,25 @@ def train_moe(
             }
             for router in routers
         ]
-        history.append({"loss": loss.item(), "layers": layer_metrics})
+        history.append(
+            {
+                "loss": losses.loss.item(),
+                "task_loss": losses.task_loss.item(),
+                "aux_loss": losses.aux_loss.item()
+                if losses.aux_loss is not None
+                else 0.0,
+                "aux_loss_coefficient": aux_loss_coefficient,
+                "layers": layer_metrics,
+            }
+        )
         for router in routers:
             router.reset_metrics()
 
         if step == 0 or (step + 1) % 10 == 0 or step == steps - 1:
             loads = [round(layer["maxvio"].item(), 2) for layer in layer_metrics]
             print(
-                f"step {step + 1:3d} | loss {loss.item():.4f} | maxvio per layer {loads}"
+                f"step {step + 1:3d} | task {losses.task_loss.item():.4f} "
+                f"| aux {history[-1]['aux_loss']:.4f} | maxvio per layer {loads}"
             )
 
     return history
@@ -99,15 +119,33 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
     """Save summary curves and a separate per-layer expert-usage figure."""
     import matplotlib.pyplot as plt
 
+    coefficient = history[0]["aux_loss_coefficient"]
+    run_tag = f"aux_{coefficient:g}" if coefficient != 0 else "no_aux"
+    run_label = (
+        f"auxiliary coefficient = {coefficient:g}"
+        if coefficient != 0
+        else "no auxiliary loss"
+    )
+    output_path = Path(output_path)
+    output_path = output_path.with_name(
+        f"{output_path.stem}_{run_tag}{output_path.suffix}"
+    )
+
     fig, axes = plt.subplots(3, 2, figsize=(14, 12), layout="constrained")
+    fig.suptitle(f"MoE training ({run_label})")
     panels = list(axes.flat)
     steps = range(1, len(history) + 1)
     num_layers = len(history[0]["layers"])
     num_experts = history[0]["layers"][0]["assignment_fraction"].numel()
-    panels[0].plot(steps, [record["loss"] for record in history])
+    panels[0].plot(steps, [record["loss"] for record in history], label="Total")
+    panels[0].plot(steps, [record["task_loss"] for record in history], label="Task")
+    panels[0].plot(
+        steps, [record["aux_loss"] for record in history], label="Aux (unweighted)"
+    )
+    panels[0].legend(fontsize="small")
     panels[0].set_title(
         "Training loss (fixed batch)\n"
-        "Lower is better; near zero indicates memorization, not generalization.",
+        "Task near zero = memorization; auxiliary loss has a balanced reference of 1.",
         fontsize=10,
     )
 
@@ -147,7 +185,6 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
 
     for ax in panels:
         ax.set_xlabel("Optimizer step")
-    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
@@ -163,7 +200,7 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         layout="constrained",
     )
     fig.suptitle(
-        "Expert routing by layer\n"
+        f"Expert routing by layer ({run_label})\n"
         "Each color is one expert; dashed line = equal share (1/E).",
         fontsize=12,
     )
@@ -222,10 +259,19 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=800)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threads", type=int, default=1)
-    parser.add_argument("--output", default="training/plots/moe_metrics.png")
+    parser.add_argument("--aux-loss-coefficient", type=float, default=0.0)
+    parser.add_argument(
+        "--output",
+        default="training/plots/moe_metrics.png",
+        help="Base plot path; the auxiliary-loss setting is appended automatically.",
+    )
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
     history = train_moe(
-        ModelConfig(), OptimizerConfig(), steps=args.steps, device=args.device
+        ModelConfig(),
+        OptimizerConfig(),
+        steps=args.steps,
+        device=args.device,
+        aux_loss_coefficient=args.aux_loss_coefficient,
     )
     plot_metrics(history, args.output)
