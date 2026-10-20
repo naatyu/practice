@@ -187,7 +187,157 @@ at once instead of once per expert. These measurements compare runtime,
 not peak memory, GPU throughput, or a trained model's quality. Parameter
 counts and selected-expert arithmetic are the same for all four methods.
 
+## Routing diagnostics: practitioner references
+
+The learner proposed assignment counts per expert to reveal overloaded and unused
+experts. Keep counts per layer, sum over all microbatches contributing to an
+optimizer step, report, then reset. No gradient tracking is needed. A
+non-persistent registered buffer moves with the module but is not checkpointed.
+Collect training statistics only; evaluation should not contaminate training
+counts. Later, checkpoint recomputation must not count forwards twice.
+
+References checked on 2026-10-19:
+
+- [TorchTitan router](https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/common/moe/moe.py)
+  accumulates non-persistent expert counts, excludes padding, guards against
+  recomputation, and pools statistics across ranks for step-level bias updates.
+- [DeepSeek Loss-Free Balancing report](https://arxiv.org/html/2408.15664v1)
+  defines MaxVio as relative overload of the busiest expert compared with the
+  balanced target. Batch and whole-validation-set variants answer different
+  questions; the report also evaluates perplexity, not balance alone.
+- [Megatron router diagnostics](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/moe/router_diagnostics.py)
+  distinguishes mean all-expert scores, actual versus auxiliary assignments,
+  expert biases, selection overlap, valid-token counts, and top-k boundary margin.
+  Its [metric tracker](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/moe/moe_logging.py)
+  supports per-layer reporting and detached metric accumulation; its router
+  separately logs balancing objectives and z-loss.
+- [Kimi K3 report](https://arxiv.org/html/2607.24653)
+  distinguishes expert routing imbalance from hardware-rank imbalance: balanced
+  rank execution can coexist with skewed per-expert counts. Quantile histograms
+  pool information over microbatches and ranks before the step-level update.
+
+Our recommended initial suite is counts/shares, unused experts, MaxVio, mean
+all-expert probabilities, per-token router entropy, and selected probability
+mass. These are a teaching selection, not a claim that every source logs all
+of them. Entropy uses the full expert probability distribution, not the
+renormalized top-k weights. Selected mass is measured before renormalization;
+afterward it is always one. Uniform aggregate use does not imply uncertain
+per-token routing or prove useful specialization. Tiny batches can leave
+experts unused without indicating persistent collapse.
+
+Use task/validation loss alongside routing metrics. Add auxiliary objectives,
+drop rate, bias diagnostics, and systems metrics when their mechanisms exist.
+Accumulate counts and sufficient statistics before computing ratios; do not
+average unequal-microbatch metrics blindly. Step-aggregated balance can hide
+alternating overloaded microbatches, so per-microbatch measurements become
+important when studying expert-parallel throughput. Distributed counts must
+include each assignment once, not multiply replicated routing statistics.
+
+## MaxVio implemented
+
+MaxVio means maximal violation: `(counts.max() - counts.mean()) / counts.mean()`.
+It is one scalar per layer/window. Zero means balanced nonempty load; 0.5 means
+the busiest expert is 50% above target. This differs from max-minus-min and from
+load/target, whose balanced value is one. The learner's implementation divides
+an integer sum by E to get a floating-point target, and runs under no_grad.
+
+For no assignments, return zero as a no-data convention, not proof of balance.
+`counts.new_zeros((), dtype=torch.float32)` creates a floating scalar on the same
+device as counts. `zeros_like(counts)` would create an integer vector [E];
+`torch.zeros((), device=counts.device, dtype=torch.float32)` is equivalent.
+Seven assistant-authored tests cover known values, zero counts, scale invariance,
+one expert, scalar shape, unchanged inputs, and absence of autograd tracking.
+`assignment_fraction` is also implemented and tested: counts divided by total
+assignments, shape [E], or a floating zero vector on the input device if none
+exist. It preserves counts and does not track gradients. Marin uses this exact
+term in its [router metrics](https://github.com/marin-community/marin/blob/main/experiments/grug/fast_track/router_metrics.py).
+This is not fraction of unique tokens; each token contributes K assignments.
+Marin's aggregate assignment entropy is distinct from per-token router entropy.
+`unused_expert_count` is implemented as `(counts == 0).sum()`, returning an
+integer scalar. With all-zero counts it returns E, unlike the zero-valued
+no-data conventions for MaxVio and assignment fractions. It describes the
+measurement window, not permanent expert death. Four assistant-authored tests
+cover partial, absent, and complete use, including a single expert.
+`assignment_entropy` now computes `-sum(p * log2(p.clamp_min(eps)))` from the
+assignment fractions, outside autograd. It returns a scalar in bits. Four equal
+shares give 2 bits, two equal nonzero shares give 1 bit, and a point mass gives
+zero. Entropy concerns uncertainty about the expert ID, not the number of
+distinct count values. For zero assignments, the zero fractions yield zero by
+our no-data convention.
+
+Adding eps to every probability biased the result and made point-mass entropy
+slightly negative. Clamping only the log argument avoids changing probabilities
+above eps; positive fractions below eps are still approximated. Six new
+assistant-authored tests cover the stated examples, nonnegative finite scalar
+results, unchanged counts, scale/expert-order invariance, and no gradient graph.
+There are now 69 passing MoE tests. Next: mean all-expert router probabilities,
+then the remaining diagnostics; training-loop logging/reset is still pending.
+
+Probability-statistics update: the learner added non-persistent `router_prob_sum`
+[E] (initially float32) and `num_tokens` (int64 scalar). The training-only no_grad
+block sums full probabilities over B and S after casting to float32, and adds
+B*S tokens, not B*S*K assignments. `reset_metrics()` clears all three buffers.
+The assistant updated reset/eval tests and added unequal-microbatch and buffer
+registration checks; 71 MoE tests pass. Next: fill the existing `compute_metrics`
+stub with the four count-based metrics and mean all-expert probabilities, using
+a zero [E] vector if no tokens exist. Reading metrics must not reset statistics.
+`compute_metrics()` is now implemented: keys are `maxvio`, `assignment_fraction`,
+`unused_expert_count`, `assignment_entropy`, and `mean_router_probability`.
+The mean divides by `num_tokens.clamp_min(1)`, yielding a zero vector when no
+data exists. Reporting leaves buffers unchanged and returns tensors that survive
+later resets. Four additional tests cover exact mapping/values, no-data before
+and after reset, no autograd, repeat reads, and report stability. There are now
+75 passing MoE tests at that checkpoint.
+
+The learner has since added `router_entropy(probabilities)`, summing
+`-p*log2(p.clamp_min(eps))` over experts only: [B, S, E] -> [B, S]. Three
+assistant-authored tests verify per-token values, no autograd, unchanged inputs,
+and confident opposite token choices with balanced aggregate assignments.
+The learner wired `router_entropy_sum` accumulation inside the existing
+training-only no_grad block, using full float32 probabilities, then sums over
+tokens. `mean_router_entropy` divides by the clamped token count, giving zero
+for no data. Two additional tests verify unequal-microbatch weighting and
+balanced assignments with confident routing. Existing reset/eval/report tests
+now cover entropy too; there were 80 passing MoE tests at that checkpoint.
+Keep explanatory docstrings on metric functions, not TopKRouter
+(the learner explicitly removed that class docstring). Selected probability mass,
+training-loop logging/reset, and the tiny training run remain pending.
+
+Selected probability mass is now implemented. The learner correctly explained
+that top-2 of [0.4, 0.3, 0.2, 0.1] retains 0.7 before renormalization; after
+renormalization the selected weights always sum to one. The router accumulates
+`scores.float().sum()` into a non-persistent scalar, resets it with the other
+statistics, and reports `mean_selected_probability_mass` using clamped token
+count. Casting BEFORE reduction prevents low-precision overflow/rounding;
+a float32 destination buffer alone does not promote the reduction.
+Five additional tests cover known mass for K=1/2/E, unequal-microbatch weighting,
+and float32 reduction under CPU autocast. Existing registration, reset, eval,
+no-data and read-only-report tests also cover the new buffer/metric.
+There are now 85 passing MoE tests. The initial seven routing metrics are done;
+resume with a tiny training run and per-layer logging/reset once per optimizer
+step, keeping task loss separate from routing diagnostics. Do not restart the
+metric implementations or start balancing losses before this experiment.
+
 ## Handoff
+
+### Latest checkpoint: tiny training run (2026-10-20)
+
+The learner's `training/train_moe.py` now reuses `train_step` on one full batch,
+without gradient accumulation.
+Codex added detached per-layer metric history, once-per-step reporting/reset,
+the final plotting helper, and regression tests. Fixes include `[B, S]` token
+IDs, aligned labels shifted only by the existing helper, device placement,
+and gradient clearing through that helper. Default top-2 routing avoids the
+constant normalized top-1 weight and its missing task-loss router gradient.
+
+The full batch contributes to each step's statistics. Scalar summary curves and
+separate per-layer expert-share/probability curves are saved after training;
+consistent expert colors and dashed equal-share references replace the less
+readable heatmaps. Diagnostics remain outside
+autograd and no balancing objective has been added. A 100-step CPU run reduced
+loss from 12.60 to 3.21, but does not yet demonstrate near-zero overfit.
+Resume with plot interpretation, then auxiliary load-balancing loss.
+Earlier checkpoint notes below are historical.
 
 The learner's router, naive MoE, expert-batched MoE, and grouped experts are
 implemented. PackedExperts and GroupedExperts remain side by side in
@@ -204,11 +354,17 @@ The assistant's integration tests verify module selection, configuration,
 causality, nonzero task-loss gradients through routers and expert weights,
 and full-versus-cached decoding with full or sliding-window attention. Latest
 focused verification: 74 tests passed across MoE, Transformer block, decoder,
-and training. A tiny MoE training run and routing diagnostics remain future work.
+and training at that checkpoint. Router diagnostics are now implemented and
+tested; a tiny training run and training-loop logging/reset remain future work.
 
-Resume with the unanswered question: "What would you log to tell whether the
-router uses all experts or concentrates most assignments in a few?" Discuss
-that first, then let the learner implement diagnostics and a tiny training run.
+The learner implemented a non-persistent int64 count buffer, training-only
+accumulation under no_grad, and in-place `reset_metrics()` (renamed from
+`reset_tokens_count` when probability buffers were added). A class-level
+Tensor annotation resolves ty's dynamic buffer type inference without assigning
+the attribute before register_buffer. Four assistant-authored tests verify the
+diagnostic lifecycle; there are now 46 MoE tests. Resume by deriving MaxVio,
+then the other metrics and the tiny training run. Logging/reset in the training
+loop has not been implemented yet.
 Keep explanations concrete and introduce one shape transformation at a time.
 
 Earlier verification on 2026-10-17: 332 repository tests passed before decoder

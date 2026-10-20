@@ -74,3 +74,21 @@ framework.
 3. Why are both normally used during validation?
 4. How does `torch.inference_mode()` differ from `torch.no_grad()`?
 
+## Tiny MoE training run
+
+```bash
+uv run --extra plots python -m training.train_moe
+```
+
+`train_moe.py` reuses `train_step` on one fixed batch, without gradient accumulation.
+It records loss and all seven router metrics per layer, then resets statistics
+once per optimizer step. `plot_metrics` saves summary curves to
+`training/plots/moe_metrics.png` and per-layer expert curves to
+`training/plots/moe_metrics_experts.png` (both ignored by Git).
+Expert colors are consistent across panels; dashed lines mark equal shares.
+Use `--steps`, `--device`, or `--output` to change the run.
+
+The learner wrote the initial script; Codex added logging, plotting, tests,
+and training fixes. The default uses top-2 routing so normalized selected
+weights can train the router through task loss. No balancing loss is added yet.
+

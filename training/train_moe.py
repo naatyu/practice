@@ -1,0 +1,231 @@
+"""Tiny MoE overfit run"""
+
+import argparse
+from dataclasses import asdict, dataclass
+from math import log2
+from pathlib import Path
+
+import torch
+
+from cross_entropy import CrossEntropy
+from decoder_model import DecoderModel
+from moe import GroupedMoE
+
+from .training import train_step
+
+
+@dataclass
+class ModelConfig:
+    vocab_size: int = 256
+    d_model: int = 16
+    num_heads: int = 4
+    max_seq_len: int = 64
+    n_layers: int = 6
+    hidden_dim: int = 3 * d_model
+    num_kv_heads: int | None = 2
+    dropout_p: float = 0.0
+    rope_base: float = 11
+    window_size: int | None = None
+    num_experts: int | None = 4
+    top_k: int | None = 2
+    tie_weights: bool = True
+
+
+@dataclass
+class OptimizerConfig:
+    lr: float = 1e-3
+    beta1: float = 0.99
+    beta2: float = 0.95
+    weight_decay: float = 0.1
+    fused: bool = True
+
+
+def train_moe(
+    model_config: ModelConfig,
+    optim_config: OptimizerConfig,
+    *,
+    steps: int = 100,
+    device: str = "cpu",
+) -> list[dict]:
+    """Overfit one fixed batch; record metrics once per optimizer step."""
+    if steps < 1:
+        raise ValueError("steps must be positive")
+    torch.manual_seed(42)
+    model = DecoderModel(**asdict(model_config)).to(device)
+    routers = []
+    for block in model.blocks:
+        assert isinstance(block.ffn, GroupedMoE)
+        routers.append(block.ffn.router)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=optim_config.lr,
+        betas=(optim_config.beta1, optim_config.beta2),
+        weight_decay=optim_config.weight_decay,
+        fused=optim_config.fused and torch.device(device).type == "cuda",
+    )
+    loss_fn = CrossEntropy()
+    batch = torch.randint(
+        model_config.vocab_size, (8, model_config.max_seq_len), device=device
+    )  # [B, S] token IDs, not embeddings.
+
+    for router in routers:
+        router.reset_metrics()
+
+    history = []
+    for step in range(steps):
+        loss = train_step(model, optimizer, batch, batch, loss_fn, max_grad_norm=1.0)
+        layer_metrics = [
+            {
+                name: value.detach().cpu().clone()
+                for name, value in router.compute_metrics().items()
+            }
+            for router in routers
+        ]
+        history.append({"loss": loss.item(), "layers": layer_metrics})
+        for router in routers:
+            router.reset_metrics()
+
+        if step == 0 or (step + 1) % 10 == 0 or step == steps - 1:
+            loads = [round(layer["maxvio"].item(), 2) for layer in layer_metrics]
+            print(
+                f"step {step + 1:3d} | loss {loss.item():.4f} | maxvio per layer {loads}"
+            )
+
+    return history
+
+
+def plot_metrics(history: list[dict], output_path: str | Path) -> None:
+    """Save summary curves and a separate per-layer expert-usage figure."""
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(3, 2, figsize=(14, 12), layout="constrained")
+    panels = list(axes.flat)
+    steps = range(1, len(history) + 1)
+    num_layers = len(history[0]["layers"])
+    num_experts = history[0]["layers"][0]["assignment_fraction"].numel()
+    panels[0].plot(steps, [record["loss"] for record in history])
+    panels[0].set_title(
+        "Training loss (fixed batch)\n"
+        "Lower is better; near zero indicates memorization, not generalization.",
+        fontsize=10,
+    )
+
+    scalar_metrics = [
+        (
+            "maxvio",
+            "MaxVio (relative overload)",
+            "Lower is more balanced; 0 = perfect balance, 0.2 = 20% overload.",
+        ),
+        (
+            "unused_expert_count",
+            "Unused experts",
+            "0 means every expert received assignments during this step.",
+        ),
+        (
+            "assignment_entropy",
+            "Assignment entropy (bits): usage balance",
+            "Higher is more balanced; log2(E) = uniform usage, 0 = one expert.",
+        ),
+        (
+            "mean_router_entropy",
+            "Router entropy (bits): token uncertainty",
+            f"Lower = stronger per-token preferences; {log2(num_experts):g} bits = all experts equally likely.",
+        ),
+        (
+            "mean_selected_probability_mass",
+            "Selected probability mass (before normalization)",
+            "Higher means top-k retains more probability mass; not a quality score.",
+        ),
+    ]
+    for ax, (name, title, guide) in zip(panels[1:6], scalar_metrics):
+        for layer in range(num_layers):
+            values = [record["layers"][layer][name].item() for record in history]
+            ax.plot(steps, values, label=f"Layer {layer}")
+        ax.set_title(f"{title}\n{guide}", fontsize=10)
+        ax.legend(fontsize="small")
+
+    for ax in panels:
+        ax.set_xlabel("Optimizer step")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved metrics plot to {output_path}")
+
+    fig, axes = plt.subplots(
+        num_layers,
+        2,
+        figsize=(14, 3 * num_layers),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+        layout="constrained",
+    )
+    fig.suptitle(
+        "Expert routing by layer\n"
+        "Each color is one expert; dashed line = equal share (1/E).",
+        fontsize=12,
+    )
+    expert_metrics = [
+        (
+            "assignment_fraction",
+            "Actual assignment share",
+            "Fraction of all top-k assignments; equal shares mean balanced workload.",
+        ),
+        (
+            "mean_router_probability",
+            "Mean router probability (before top-k)",
+            "Average softmax score over tokens; preference, not actual workload.",
+        ),
+    ]
+    peak = max(
+        layer[name].max().item()
+        for record in history
+        for layer in record["layers"]
+        for name, _, _ in expert_metrics
+    )
+    upper = min(1.0, max(1.5 / num_experts, peak * 1.1))
+    for column, (name, title, guide) in enumerate(expert_metrics):
+        values = torch.stack(
+            [
+                torch.stack([layer[name] for layer in record["layers"]])
+                for record in history
+            ]
+        )  # [steps, layers, experts]
+        for layer in range(num_layers):
+            ax = axes[layer, column]
+            for expert in range(num_experts):
+                ax.plot(
+                    steps, values[:, layer, expert].numpy(), label=f"Expert {expert}"
+                )
+            ax.axhline(1 / num_experts, color="black", linestyle="--", linewidth=1)
+            ax.set_ylim(0, upper)
+            subtitle = f"\n{guide}" if layer == 0 else ""
+            ax.set_title(f"Layer {layer}: {title}{subtitle}", fontsize=10)
+            ax.grid(alpha=0.2)
+            if layer == 0:
+                ax.legend(fontsize="small", ncol=2)
+            if layer == num_layers - 1:
+                ax.set_xlabel("Optimizer step")
+
+    expert_path = output_path.with_name(
+        f"{output_path.stem}_experts{output_path.suffix}"
+    )
+    fig.savefig(expert_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved expert routing plot to {expert_path}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--steps", type=int, default=800)
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--output", default="training/plots/moe_metrics.png")
+    args = parser.parse_args()
+    torch.set_num_threads(args.threads)
+    history = train_moe(
+        ModelConfig(), OptimizerConfig(), steps=args.steps, device=args.device
+    )
+    plot_metrics(history, args.output)

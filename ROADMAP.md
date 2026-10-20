@@ -13,8 +13,10 @@ remains the default. Optimized WY kernels are outside the completed scope.
 The learner chose MoE as the next active track. Routing, naive and expert-batched
 MoE, packed weights, and grouped-GEMM dispatch/combine are implemented and
 tested on CPU, with a reproducible comparison in `moe/SOLUTIONS.md`.
-Dense/MoE decoder integration is complete and tested. Resume with a tiny
-training run and routing diagnostics; see `moe/README.md` for the pending question.
+Dense/MoE decoder integration and seven routing diagnostics are implemented and
+tested. A tiny training runner now logs/plots per-layer diagnostics and resets
+once per optimizer step. Resume by interpreting its curves, then introducing
+auxiliary load-balancing loss; see `moe/README.md` for the checkpoint.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -313,7 +315,8 @@ written; the implementation file remains intentionally empty.
 2. Naive top-k routing and weighted expert combination — done
 3. Expert-wise token dispatch and output accumulation — done; packed weights
    and selectable loop/grouped-MM execution tested on CPU and benchmarked
-4. Decoder integration — done; tiny training run and routing diagnostics next
+4. Decoder integration and routing diagnostics — done; tiny training runner and
+   plots available, interpret results next
 5. Auxiliary load-balancing loss
 6. Expert capacity, overflow, and dropless routing
 7. Router numerical stability and z-loss
@@ -325,8 +328,7 @@ written; the implementation file remains intentionally empty.
 13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 The learner implements; the assistant interviews, reviews, writes tests, and
-records corrected reasoning. Last checked: 74 focused tests pass across MoE,
-Transformer block, decoder, and training. Session handoff
+records corrected reasoning. Session handoff
 and CPU benchmark results are in `moe/README.md` and
 `moe/SOLUTIONS.md`.
 
@@ -369,12 +371,37 @@ and CPU benchmark results are in `moe/README.md` and
 - Checkpointing optimizer and random-number-generator state
 - Data leakage and evaluation design
 
+### 27. Build a small autograd engine
+
+Start with a scalar reverse-mode engine, then optionally extend it to tensors.
+Keep this a small learning project, not a production framework.
+
+- Scalar values, computation graphs, and local backward rules
+- Addition, multiplication, powers, and simple nonlinearities
+- Reverse topological traversal and the chain rule
+- Gradient accumulation for reused values and branching graphs
+- Explicit gradient reset and a tiny MLP trained with SGD
+- Tests against hand calculations, finite differences, and PyTorch autograd
+- Optional tensor extension: reductions, broadcasting backward, and matmul
+- Optional follow-up: saved intermediates, detach/no-grad, and in-place hazards
+
+References:
+
+- [Andrej Karpathy's micrograd](https://github.com/karpathy/micrograd): a small
+  scalar autograd engine and neural-network library, our starting reference.
+- [TinyTorch: Don't Just Import PyTorch. Build It.](https://pytorch.org/blog/tinytorch-dont-just-import-pytorch-build-it/)
+  (PyTorch blog, September 21, 2026): a recent build-from-scratch curriculum
+  including autograd; likely the post mentioned during planning.
+- [TinyTorch Module 06: Autograd](https://mlsysbook.ai/tinytorch/modules/06_autograd.html):
+  reference for the optional tensor-level extension rather than taking on the
+  entire framework curriculum.
+
 ## Immediate path
 
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: tiny training run and routing diagnostics next]
+-> MoE [active: interpret training diagnostics, then balancing loss]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 
