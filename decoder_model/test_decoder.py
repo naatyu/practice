@@ -342,3 +342,43 @@ def test_decoder_auxiliary_loss_is_absent_for_dense_or_eval(num_experts):
     output = model(tokens, use_cache=True)
     assert output.aux_loss is None
     assert output.kv_caches is not None and output.kv_caches.position == 4
+
+
+@pytest.mark.parametrize("policy", ["position", "probs"])
+def test_decoder_passes_capacity_to_every_moe_layer(policy):
+    model = DecoderModel(
+        vocab_size=16,
+        d_model=16,
+        num_heads=2,
+        max_seq_len=8,
+        n_layers=2,
+        hidden_dim=32,
+        num_experts=4,
+        top_k=2,
+        capacity_factor=0.25,
+        drop_policy=policy,
+    )
+    dispatched = []
+
+    def capture(_module, args):
+        dispatched.append(args[0].shape[0])
+
+    handles = []
+    for block in model.blocks:
+        assert isinstance(block, TransformerBlock)
+        assert isinstance(block.ffn, GroupedMoE)
+        assert block.ffn.capacity_factor == 0.25 and block.ffn.drop_policy == policy
+        handles.append(block.ffn.experts.register_forward_pre_hook(capture))
+    output = model(torch.tensor([[0, 1, 2, 3]]))
+    for handle in handles:
+        handle.remove()
+    assert output.logits.shape == (1, 4, 16)
+    assert output.aux_loss is not None and output.aux_loss.requires_grad
+    assert len(dispatched) == 2
+    for block, retained in zip(model.blocks, dispatched):
+        assert isinstance(block, TransformerBlock)
+        assert isinstance(block.ffn, GroupedMoE)
+        # Eight requests, capacity ceil(0.25*8/4)=1, at most four retained.
+        assert retained <= 4
+        assert block.ffn.router.tokens_per_expert.sum() == 8
+        assert block.ffn.dropped_assignments_per_expert.sum() == 8 - retained

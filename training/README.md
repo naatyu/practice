@@ -81,12 +81,15 @@ uv run --extra plots python -m training.train_moe
 ```
 
 `train_moe.py` reuses `train_step` on one fixed batch, without gradient accumulation.
-It records loss and all seven router metrics per layer, then resets statistics
+It records loss, seven router metrics, and two drop-rate metrics per layer,
+then resets both requested and dropped counts through `GroupedMoE.reset_metrics()`
 once per optimizer step. `plot_metrics` appends the training setting to filenames:
-`moe_metrics_no_aux.png` / `moe_metrics_no_aux_experts.png` for the baseline,
-or `moe_metrics_aux_0.01.png` / `moe_metrics_aux_0.01_experts.png` for coefficient
-0.01, under `training/plots/`. The setting also appears in figure titles.
-Expert colors are consistent across panels; dashed lines mark equal shares.
+`moe_metrics_no_aux_dropless.png` for the baseline, or
+`moe_metrics_aux_0.05_capacity_1_probs.png` for auxiliary coefficient 0.05,
+capacity factor 1, and score-priority dropping. Both have matching `_experts.png`
+figures under `training/plots/`. Settings also appear in figure titles.
+The expert figure has requested shares, mean probabilities, and drop rates;
+colors identify experts and dashed lines mark equal shares or zero drops.
 Use `--steps`, `--device`, or `--output` to change the run. `--output` specifies
 the base path; the training-setting suffix is added even for custom names.
 
@@ -102,6 +105,19 @@ uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --
 
 The plot distinguishes total, task, and unweighted auxiliary loss. Compare with
 the zero-coefficient baseline; an auxiliary reference of 1 is not a task-loss target.
+
+Capacity settings pass from `ModelConfig` through the decoder and block to every
+MoE layer. No `--capacity-factor` means dropless; otherwise choose a policy:
+
+```bash
+uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.05 --capacity-factor 1.0 --drop-policy probs
+```
+
+Use `--drop-policy position` for the keep-first comparison. Global drop-rate
+curves and per-expert rates show overflow; requested-share curves remain pre-drop.
+Codex added this configuration/reporting wiring and its tests. Capacity applies
+per forward, so leave it disabled when checking full-versus-cached inference
+equivalence: dropping decisions can depend on the other tokens in a chunk.
 
 The learner wrote the initial script; Codex added logging, plotting, tests,
 and training fixes. The default uses top-2 routing so normalized selected

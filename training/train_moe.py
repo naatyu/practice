@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict, dataclass
 from math import log2
 from pathlib import Path
+from typing import Literal
 
 import torch
 
@@ -29,6 +30,8 @@ class ModelConfig:
     num_experts: int | None = 4
     top_k: int | None = 2
     tie_weights: bool = True
+    capacity_factor: float | None = None
+    drop_policy: Literal["position", "probs"] = "probs"
 
 
 @dataclass
@@ -53,10 +56,10 @@ def train_moe(
         raise ValueError("steps must be positive")
     torch.manual_seed(42)
     model = DecoderModel(**asdict(model_config)).to(device)
-    routers = []
+    moes = []
     for block in model.blocks:
         assert isinstance(block.ffn, GroupedMoE)
-        routers.append(block.ffn.router)
+        moes.append(block.ffn)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -70,8 +73,8 @@ def train_moe(
         model_config.vocab_size, (8, model_config.max_seq_len), device=device
     )  # [B, S] token IDs, not embeddings.
 
-    for router in routers:
-        router.reset_metrics()
+    for moe in moes:
+        moe.reset_metrics()
 
     history = []
     for step in range(steps):
@@ -87,9 +90,9 @@ def train_moe(
         layer_metrics = [
             {
                 name: value.detach().cpu().clone()
-                for name, value in router.compute_metrics().items()
+                for name, value in moe.compute_metrics().items()
             }
-            for router in routers
+            for moe in moes
         ]
         history.append(
             {
@@ -99,17 +102,24 @@ def train_moe(
                 if losses.aux_loss is not None
                 else 0.0,
                 "aux_loss_coefficient": aux_loss_coefficient,
+                "capacity_factor": model_config.capacity_factor,
+                "drop_policy": model_config.drop_policy,
                 "layers": layer_metrics,
             }
         )
-        for router in routers:
-            router.reset_metrics()
+        for moe in moes:
+            moe.reset_metrics()
 
         if step == 0 or (step + 1) % 10 == 0 or step == steps - 1:
             loads = [round(layer["maxvio"].item(), 2) for layer in layer_metrics]
+            drops = [
+                round(layer["dropped_assignment_rate"].item(), 3)
+                for layer in layer_metrics
+            ]
             print(
                 f"step {step + 1:3d} | task {losses.task_loss.item():.4f} "
-                f"| aux {history[-1]['aux_loss']:.4f} | maxvio per layer {loads}"
+                f"| aux {history[-1]['aux_loss']:.4f} | maxvio per layer {loads} "
+                f"| drop per layer {drops}"
             )
 
     return history
@@ -126,14 +136,27 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         if coefficient != 0
         else "no auxiliary loss"
     )
+    capacity = history[0]["capacity_factor"]
+    policy = history[0]["drop_policy"]
+    capacity_tag = (
+        f"capacity_{capacity:g}_{policy}" if capacity is not None else "dropless"
+    )
+    run_tag = f"{run_tag}_{capacity_tag}"
+    run_label += (
+        f", capacity factor = {capacity:g} ({policy})"
+        if capacity is not None
+        else ", dropless"
+    )
     output_path = Path(output_path)
     output_path = output_path.with_name(
         f"{output_path.stem}_{run_tag}{output_path.suffix}"
     )
 
-    fig, axes = plt.subplots(3, 2, figsize=(14, 12), layout="constrained")
+    fig = plt.figure(figsize=(14, 16), layout="constrained")
+    grid = fig.add_gridspec(4, 2)
+    panels = [fig.add_subplot(grid[row, col]) for row in range(3) for col in range(2)]
+    panels.append(fig.add_subplot(grid[3, :]))  # Full-width drop-rate panel.
     fig.suptitle(f"MoE training ({run_label})")
-    panels = list(axes.flat)
     steps = range(1, len(history) + 1)
     num_layers = len(history[0]["layers"])
     num_experts = history[0]["layers"][0]["assignment_fraction"].numel()
@@ -175,13 +198,20 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
             "Selected probability mass (before normalization)",
             "Higher means top-k retains more probability mass; not a quality score.",
         ),
+        (
+            "dropped_assignment_rate",
+            "Dropped assignment rate",
+            "Fraction of requested expert assignments dropped; 0 = no overflow.",
+        ),
     ]
-    for ax, (name, title, guide) in zip(panels[1:6], scalar_metrics):
+    for ax, (name, title, guide) in zip(panels[1:7], scalar_metrics):
         for layer in range(num_layers):
             values = [record["layers"][layer][name].item() for record in history]
             ax.plot(steps, values, label=f"Layer {layer}")
         ax.set_title(f"{title}\n{guide}", fontsize=10)
         ax.legend(fontsize="small")
+        if name == "dropped_assignment_rate":
+            ax.set_ylim(0, 1)
 
     for ax in panels:
         ax.set_xlabel("Optimizer step")
@@ -192,35 +222,39 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
 
     fig, axes = plt.subplots(
         num_layers,
-        2,
-        figsize=(14, 3 * num_layers),
+        3,
+        figsize=(21, 3 * num_layers),
         squeeze=False,
         sharex=True,
-        sharey=True,
         layout="constrained",
     )
     fig.suptitle(
         f"Expert routing by layer ({run_label})\n"
-        "Each color is one expert; dashed line = equal share (1/E).",
+        "Each color is one expert; dashed lines mark equal share (1/E) or zero drops.",
         fontsize=12,
     )
     expert_metrics = [
         (
             "assignment_fraction",
-            "Actual assignment share",
-            "Fraction of all top-k assignments; equal shares mean balanced workload.",
+            "Requested assignment share",
+            "Before capacity; equal shares mean balanced router requests.",
         ),
         (
             "mean_router_probability",
             "Mean router probability (before top-k)",
             "Average softmax score over tokens; preference, not actual workload.",
         ),
+        (
+            "dropped_assignment_rate_per_expert",
+            "Dropped assignment rate per expert",
+            "Fraction of this expert's requests dropped; 0 = no overflow.",
+        ),
     ]
     peak = max(
         layer[name].max().item()
         for record in history
         for layer in record["layers"]
-        for name, _, _ in expert_metrics
+        for name, _, _ in expert_metrics[:2]
     )
     upper = min(1.0, max(1.5 / num_experts, peak * 1.1))
     for column, (name, title, guide) in enumerate(expert_metrics):
@@ -236,8 +270,14 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
                 ax.plot(
                     steps, values[:, layer, expert].numpy(), label=f"Expert {expert}"
                 )
-            ax.axhline(1 / num_experts, color="black", linestyle="--", linewidth=1)
-            ax.set_ylim(0, upper)
+            is_drop_rate = name == "dropped_assignment_rate_per_expert"
+            ax.axhline(
+                0 if is_drop_rate else 1 / num_experts,
+                color="black",
+                linestyle="--",
+                linewidth=1,
+            )
+            ax.set_ylim(0, 1 if is_drop_rate else upper)
             subtitle = f"\n{guide}" if layer == 0 else ""
             ax.set_title(f"Layer {layer}: {title}{subtitle}", fontsize=10)
             ax.grid(alpha=0.2)
@@ -260,15 +300,17 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--aux-loss-coefficient", type=float, default=0.0)
+    parser.add_argument("--capacity-factor", type=float, default=None)
+    parser.add_argument("--drop-policy", choices=["position", "probs"], default="probs")
     parser.add_argument(
         "--output",
         default="training/plots/moe_metrics.png",
-        help="Base plot path; the auxiliary-loss setting is appended automatically.",
+        help="Base plot path; auxiliary-loss and capacity settings are appended automatically.",
     )
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
     history = train_moe(
-        ModelConfig(),
+        ModelConfig(capacity_factor=args.capacity_factor, drop_policy=args.drop_policy),
         OptimizerConfig(),
         steps=args.steps,
         device=args.device,

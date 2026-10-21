@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 from torch import nn
 
@@ -21,6 +23,9 @@ class TransformerBlock(nn.Module):
         eps: float = 1e-6,
         num_experts: int | None = None,
         top_k: int | None = None,
+        *,
+        capacity_factor: float | None = None,
+        drop_policy: Literal["position", "probs"] = "probs",
     ):
         super().__init__()
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
@@ -40,7 +45,14 @@ class TransformerBlock(nn.Module):
         if num_experts is not None:
             if top_k is None:
                 raise ValueError("Top K can't be None when using moe.")
-            self.ffn = GroupedMoE(d_model, hidden_dim, num_experts, top_k)
+            self.ffn = GroupedMoE(
+                d_model,
+                hidden_dim,
+                num_experts,
+                top_k,
+                capacity_factor=capacity_factor,
+                drop_policy=drop_policy,
+            )
         else:
             self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)
 

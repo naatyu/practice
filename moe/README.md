@@ -59,10 +59,17 @@ explicit `top_k` and constructs a routed MoE in every block. Pre-norm,
 residual paths, and the existing dense default are preserved. The original
 positional `eps` argument remains in its original constructor position.
 
-The tiny training run now logs all seven diagnostics per layer and resets them
+The tiny training run logs seven router diagnostics plus two drop-rate metrics per
+layer and resets them together
 once per optimizer step. Auxiliary balancing loss is implemented and wired into
-training with a configurable coefficient (zero by default). No capacity limit
-or shared experts yet.
+training with a configurable coefficient (zero by default). Capacity settings
+are passed through the decoder to each MoE layer; shared experts are not added yet.
+`GroupedMoE` supports
+an optional `capacity_factor`: `None` is dropless; a positive factor caps each
+expert at `ceil(factor * B*S*K/E)` assignments. `drop_policy="probs"` (default)
+keeps the highest returned router weights; `"position"` keeps the first in token order.
+Surviving mixing weights are preserved, and dropped assignments are not computed.
+The learner implemented this algorithm; Codex cleaned up structure and added tests.
 
 ### Run and plot
 
@@ -71,10 +78,10 @@ uv run --extra plots python -m training.train_moe
 ```
 
 The summary figure contains loss and per-layer scalar curves. Filenames include
-`_no_aux` or `_aux_<coefficient>` so different settings do not overwrite each other:
-for example, `training/plots/moe_metrics_aux_0.01.png`. The matching `_experts.png`
-figure shows assignment/probability curves for
-each expert, one row per layer, with dashed equal-share references. The learner
+`_no_aux` or `_aux_<coefficient>`, plus `_dropless` or `_capacity_<factor>_<policy>`:
+for example, `training/plots/moe_metrics_aux_0.05_capacity_1_probs.png`.
+The matching `_experts.png` figure shows requested-share, probability, and drop-rate
+curves for each expert, one row per layer, with dashed reference lines. The learner
 wrote the initial script; Codex added logging, plotting, tests, and training fixes.
 A 100-step CPU run reduced fixed-batch loss from 12.60 to 3.21; this shows learning,
 not yet complete memorization at that checkpoint; the learner's later 800-step
@@ -110,7 +117,7 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All six test files are assistant-authored. There are 96 passing MoE tests.
+All six test files are assistant-authored. There are 130 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
@@ -157,14 +164,21 @@ reading and resetting once per optimizer step on one full batch (no gradient acc
 The learner has implemented the balancing loss and understands its gradient
 path through full softmax probabilities. Explicit per-layer loss returns and
 training integration are now assistant-authored. Coefficient experiments and
-their limitations have been discussed. Next: capacity/overflow, using existing
-dropless dispatch as the reference; do not repeat the completed loss plumbing.
+their limitations have been discussed. Both position- and score-priority capacity
+dispatch are implemented and tested in `GroupedMoE`, with a dropless fast path
+and unchanged pre-drop router statistics. Per-expert dropped counts now
+accumulate during training; MoE-level reset clears both dropped and requested
+counts. MoE-level reporting includes global/per-expert drop rates with
+zero-request protection and no implicit reset. Codex wired decoder/block capacity
+configuration, CLI options, MoE-level reporting/reset, drop-rate plots, and run tags.
+Next: compare dropless, position, and probs runs at the same capacity factor.
+Do not repeat the completed loss plumbing.
 The learner asked to include practitioner metrics from frameworks and recent model reports.
 Do not repeat decoder integration or the implemented diagnostics.
 Keep explanations short and concrete; introduce one shape change at a time.
 The learner writes the implementation; the assistant writes tests and reviews.
 
-Last verification: 405 repo tests pass, including 96 MoE tests.
+Last verification: 444 repo tests pass, including 130 MoE tests.
 Targeted model/MoE/generation/training Ruff/ty checks pass. Run
 `uv run pytest moe transformer_block decoder_model training -q` when resuming.
 For debugging,

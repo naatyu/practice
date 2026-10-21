@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 from torch import nn
@@ -36,6 +37,8 @@ class DecoderModel(nn.Module):
         top_k: int | None = None,
         *,
         tie_weights: bool = True,
+        capacity_factor: float | None = None,
+        drop_policy: Literal["position", "probs"] = "probs",
     ):
         super().__init__()
 
@@ -69,6 +72,8 @@ class DecoderModel(nn.Module):
                     window_size=self.window_size,
                     num_experts=num_experts,
                     top_k=top_k,
+                    capacity_factor=capacity_factor,
+                    drop_policy=drop_policy,
                 )
                 for _ in range(n_layers)
             ]

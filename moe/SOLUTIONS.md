@@ -98,6 +98,81 @@ loss near 1, not evidence of failed memorization. These single-batch experiments
 do not measure generalization. Auxiliary balancing is complete for this stage.
 Next: expert capacity and overflow, compared with the existing dropless dispatch.
 
+## Capacity-limited dispatch: keep first
+
+The learner implemented optional capacity in `GroupedMoE`, leaving `None`
+dropless. Capacity is `ceil(capacity_factor * B*S*K / E)` assignments per expert,
+not tokens per sequence. The factor must be finite and strictly positive.
+Headroom accommodates ordinary routing variation; experts do not inherently
+require a cap. In distributed dispatch, the busiest device can delay the others.
+
+Stable expert sorting preserves flattened batch/sequence order within groups.
+Subtracting repeated group starts from global assignment indices gives local
+positions. Keep positions below capacity, cap counts, and compute fresh int32
+offsets before gathering or processing expert inputs. The same filtered
+permutation indexes original tokens and weights; retained assignment count N
+may be smaller than B*S*K.
+
+A dropped assignment contributes zero, with no rerouting or weight
+renormalization. The token stays in the sequence and task loss; if all its
+assignments are dropped, its MoE output is zero and the block residual still
+carries its representation. Router logging and balancing retain pre-drop counts
+so overload is not concealed by clipping. Keep-first is simple but favors earlier
+tokens; score-priority dropping is the next exercise.
+
+Codex cleaned up structure/comments, made the option keyword-only, skipped
+local-position work on the dropless path, and completed finite-factor validation.
+The learner authored the dropping algorithm. Twelve assistant-authored tests
+cover controlled outputs/gradients for both expert backends, empty groups,
+partial/complete assignment dropping, rounding, preserved weights, sufficient
+capacity, and pre-drop auxiliary/logging statistics. Decoder configuration and
+post-drop diagnostics have not yet been extended for capacity.
+
+## Score-priority capacity dispatch
+
+The learner implemented `drop_policy="probs"` (default), with `"position"` keeping
+the original policy. Sort flattened router mixing weights descending, then
+stably sort expert IDs indexed by that first permutation. The second sort
+returns positions in the weight-sorted array, not original assignment IDs:
+`permutation = weights_permutation[expert_order]` composes them correctly.
+Expert groups are then strongest-first; the same local-position mask and capped
+offsets apply. Ranking uses the router's returned, top-k-normalized mixing
+weights, not raw logits or full-softmax probabilities. Stable sorts break equal
+weights by original assignment order.
+
+Codex added the three short indexing comments, policy validation, and cleanup
+to avoid a redundant expert-ID sort. Weight sorting is skipped when dropless.
+Tests now compare both policies and gradients against independent Python
+selection, check exact retained inputs, deterministic ties, and invalid policies.
+Both policies remove the same number of assignments per expert at a given
+capacity, but can remove contributions from different tokens.
+The learner added `dropped_assignments_per_expert`, a non-persistent int64 [E]
+buffer in `GroupedMoE`. During training it accumulates requested minus retained
+counts, not retained counts themselves; eval leaves it unchanged and dropless
+forwards add zero drops. `GroupedMoE.reset_metrics()` clears both these counts
+and the router's requested counts so numerator and denominator share a window.
+Requested counts are reused from `router.tokens_per_expert`, not duplicated.
+Nine assistant-authored tests verify unequal-forward accumulation, no-overflow
+cases, eval isolation, in-place reset, and buffer registration for both backends.
+The learner implemented MoE-level `compute_metrics()`, preserving the seven
+router metrics and adding global/per-expert dropped-assignment rates. Global
+rate is sum(dropped)/sum(requested), not the average expert rate; denominators
+are clamped only after the appropriate reduction. Reporting is detached and
+does not reset statistics. Five assistant-authored tests cover controlled values,
+empty windows, unequal counts, shapes, and repeated non-mutating reads.
+At the learner's request, Codex wired `capacity_factor` and `drop_policy` through
+ModelConfig/DecoderModel/TransformerBlock, added CLI flags, and switched the tiny
+runner to MoE-level reporting/reset. History records nine metrics per layer;
+plots show aggregate and per-expert drop rates, label requested shares as
+pre-capacity, and tag filenames with capacity/policy as well as auxiliary strength.
+Default capacity remains None (dropless), without gradient accumulation.
+Tests verify forwarding to all layers, per-step count reset, both policies, and
+separate plot filenames. A short CPU CLI run verifies end-to-end plotting.
+Capacity is per forward, including eval: score-priority dropping can depend on
+future tokens in the current chunk and cached/full outputs need not agree when
+capacity is enabled. Keep dropless inference as the reference. Next: capacity
+factor/policy experiments and their task-loss/overflow tradeoffs.
+
 ## Naive weighted expert combination
 
 The MoE module registers its router and independent SwiGLU instances after

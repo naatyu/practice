@@ -5,6 +5,7 @@ import math
 import pytest
 import torch
 
+from moe import GroupedMoE
 from moe.router import TopKRouter
 from training.train_moe import ModelConfig, OptimizerConfig, plot_metrics, train_moe
 
@@ -30,7 +31,7 @@ def test_fixed_batch_loss_decreases_and_history_is_detached(small_config):
         assert isinstance(record["loss"], float) and math.isfinite(record["loss"])
         assert len(record["layers"]) == 2
         for metrics in record["layers"]:
-            assert len(metrics) == 7
+            assert len(metrics) == 9
             for value in metrics.values():
                 assert value.device.type == "cpu"
                 assert not value.requires_grad and value.grad_fn is None
@@ -75,14 +76,56 @@ def test_auxiliary_coefficient_is_applied_and_losses_logged_separately(small_con
         assert math.isfinite(record["aux_loss"]) and record["aux_loss"] > 0
 
 
-@pytest.mark.parametrize("coefficient, tag", [(0.0, "no_aux"), (0.01, "aux_0.01")])
+@pytest.mark.parametrize("policy", ["position", "probs"])
+def test_capacity_metrics_are_reported_and_reset_at_moe_level(
+    small_config, monkeypatch, policy
+):
+    small_config.capacity_factor = 0.25
+    small_config.drop_policy = policy
+    original = GroupedMoE.compute_metrics
+    observations = []
+
+    def capture(self):
+        requested = self.router.tokens_per_expert.sum().item()
+        dropped = self.dropped_assignments_per_expert.sum().item()
+        observations.append((requested, dropped))
+        return original(self)
+
+    monkeypatch.setattr(GroupedMoE, "compute_metrics", capture)
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=3, aux_loss_coefficient=0.01
+    )
+    assert len(observations) == 3 * small_config.n_layers
+    for requested, dropped in observations:
+        assert requested == 128
+        assert (
+            96 <= dropped <= requested
+        )  # At most 4 experts * capacity 8 are retained.
+    for record in history:
+        assert record["capacity_factor"] == 0.25 and record["drop_policy"] == policy
+        for metrics in record["layers"]:
+            assert 0.75 <= metrics["dropped_assignment_rate"] <= 1
+            assert metrics["dropped_assignment_rate_per_expert"].shape == (4,)
+            assert not metrics["dropped_assignment_rate"].requires_grad
+
+
+@pytest.mark.parametrize(
+    "coefficient,capacity,policy,tag",
+    [
+        (0.0, None, "probs", "no_aux_dropless"),
+        (0.01, 0.5, "position", "aux_0.01_capacity_0.5_position"),
+        (0.01, 0.5, "probs", "aux_0.01_capacity_0.5_probs"),
+    ],
+)
 def test_plot_saves_all_metrics_without_modifying_history(
-    small_config, tmp_path, coefficient, tag
+    small_config, tmp_path, coefficient, capacity, policy, tag
 ):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
+    small_config.capacity_factor = capacity
+    small_config.drop_policy = policy
     history = train_moe(
         small_config, OptimizerConfig(), steps=2, aux_loss_coefficient=coefficient
     )

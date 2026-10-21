@@ -17,8 +17,9 @@ Dense/MoE decoder integration and seven routing diagnostics are implemented and
 tested. A tiny training runner now logs/plots per-layer diagnostics and resets
 once per optimizer step. Auxiliary load-balancing loss and explicit loss returns
 are implemented and integrated into training. Coefficient experiments and their
-balance/task-loss tradeoffs have been discussed. Resume with expert capacity,
-overflow, and dropless routing; see `moe/README.md` for the checkpoint.
+balance/task-loss tradeoffs have been discussed. Capacity policies, overflow
+metrics, and decoder/training configuration are implemented. Resume with
+capacity-factor/policy experiments; see `moe/README.md` for the checkpoint.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -319,7 +320,9 @@ written; the implementation file remains intentionally empty.
    and selectable loop/grouped-MM execution tested on CPU and benchmarked
 4. Decoder integration, tiny training run, and routing diagnostics — done
 5. Auxiliary load-balancing loss — done, including coefficient experiments
-6. Expert capacity, overflow, and dropless routing — active
+6. Expert capacity, overflow, and dropless routing — active; position/score-priority
+   dispatch, overflow diagnostics, and training wiring implemented/tested;
+   compare capacity factors/policies next
 7. Router numerical stability and z-loss
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
