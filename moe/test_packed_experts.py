@@ -87,6 +87,115 @@ def test_grouped_accepts_noncontiguous_input():
     torch.testing.assert_close(grouped(x), reference(x))
 
 
+@pytest.mark.parametrize("backend", ["loop", "grouped_mm"])
+def test_shared_expert_adds_full_input_branch_without_changing_router(backend):
+    torch.manual_seed(51)
+    model = GroupedMoE(16, 32, 4, 2, shared_hidden_dim=24, expert_backend=backend)
+    assert isinstance(model.shared_expert, SwiGLU)
+    routed_only = copy.deepcopy(model)
+    routed_only.shared_expert = None
+    x = torch.randn(2, 3, 16)
+    calls = []
+
+    def capture(_module, args):
+        calls.append(args[0].detach().clone())
+
+    handle = model.shared_expert.register_forward_pre_hook(capture)
+    output, aux, z = model(x)
+    handle.remove()
+    routed_output, routed_aux, routed_z = routed_only(x)
+    torch.testing.assert_close(output, routed_output + model.shared_expert(x))
+    assert output.shape == x.shape
+    assert len(calls) == 1
+    torch.testing.assert_close(calls[0], x)
+    torch.testing.assert_close(aux, routed_aux)
+    torch.testing.assert_close(z, routed_z)
+    for name, value in model.compute_metrics().items():
+        torch.testing.assert_close(value, routed_only.compute_metrics()[name])
+    assert model.router.tokens_per_expert.sum() == 2 * 3 * 2
+    assert model.router.num_experts == 4
+    assert model.shared_expert.up_proj.bias is None
+    assert model.shared_expert.down_proj.bias is None
+
+
+@pytest.mark.parametrize("backend", ["loop", "grouped_mm"])
+def test_shared_expert_reaches_all_tokens_even_when_routed_assignments_drop(backend):
+    model = GroupedMoE(
+        16,
+        32,
+        4,
+        2,
+        shared_hidden_dim=24,
+        capacity_factor=0.01,
+        expert_backend=backend,
+    )
+    assert isinstance(model.shared_expert, SwiGLU)
+    x = torch.randn(2, 3, 16, requires_grad=True)
+    routed_only = copy.deepcopy(model)
+    routed_only.shared_expert = None
+    routed_output = routed_only(x)[0]
+    # Capacity is one per expert: at most four of twelve assignments survive.
+    dropped_tokens = routed_output.detach().eq(0).all(-1)
+    assert dropped_tokens.any()
+    output, _, _ = model(x)
+    shared_output = model.shared_expert(x)
+    torch.testing.assert_close(output[dropped_tokens], shared_output[dropped_tokens])
+    output.square().sum().backward()
+    for parameter in model.shared_expert.parameters():
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        assert parameter.grad.abs().sum() > 0
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert "shared_expert.up_proj.weight" in model.state_dict()
+
+
+def test_shared_expert_disabled_by_default():
+    model = GroupedMoE(16, 32, 4, 2, expert_backend="loop")
+    assert model.shared_expert is None
+    assert not any(name.startswith("shared_expert.") for name in model.state_dict())
+
+
+@pytest.mark.parametrize("backend", ["loop", "grouped_mm"])
+def test_shared_gate_uses_original_input_and_preserves_router_losses(backend):
+    model = GroupedMoE(
+        16,
+        32,
+        4,
+        2,
+        shared_hidden_dim=24,
+        shared_expert_gate=True,
+        expert_backend=backend,
+    )
+    assert isinstance(model.shared_expert, SwiGLU)
+    assert isinstance(model.shared_expert_gate, torch.nn.Linear)
+    assert model.shared_expert_gate.bias is None
+    with torch.no_grad():
+        model.shared_expert_gate.weight.zero_()
+        model.shared_expert_gate.weight[0, 0] = 1.0
+    routed_only = copy.deepcopy(model)
+    routed_only.shared_expert = None
+    routed_only.shared_expert_gate = None
+    x = torch.zeros(1, 3, 16)
+    x[0, :, 0] = torch.tensor([-2.0, 0.0, 2.0])
+    x.requires_grad_()
+    output, aux, z = model(x)
+    routed_output, routed_aux, routed_z = routed_only(x)
+    gate = torch.sigmoid(model.shared_expert_gate(x))
+    assert gate.shape == (1, 3, 1)
+    torch.testing.assert_close(output, routed_output + gate * model.shared_expert(x))
+    torch.testing.assert_close(aux, routed_aux)
+    torch.testing.assert_close(z, routed_z)
+    output.square().sum().backward()
+    gradient = model.shared_expert_gate.weight.grad
+    assert gradient is not None and torch.isfinite(gradient).all()
+    assert gradient.abs().sum() > 0
+    assert "shared_expert_gate.weight" in model.state_dict()
+
+
+def test_shared_gate_requires_shared_expert():
+    with pytest.raises(ValueError, match="shared"):
+        GroupedMoE(16, 32, 4, 2, shared_expert_gate=True)
+
+
 def test_grouped_bfloat16_experts_with_float32_router():
     model = GroupedMoE(16, 32, 4, 2, expert_backend="loop").bfloat16()
     model.router.float()  # Keep routing in FP32 when explicitly casting experts.

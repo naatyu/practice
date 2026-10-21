@@ -1,5 +1,66 @@
 # Mixture of Experts: completed reasoning
 
+## Shared experts and fine-grained specialization (stage 8, complete)
+
+The learner identified the shared branch as an always-on expert outside the
+router. It can learn common patterns, reducing duplication across routed experts
+and leaving room for specialization. This does not force general semantics or
+guarantee more stable training. Both branches receive the original input;
+the ungated output is `routed_output + shared_expert(x)`, each `[B, S, D]`.
+Shared computation is excluded from routed counts, capacity, balancing, and z-loss.
+The block's existing residual connection stays outside this combination.
+
+The learner implemented the optional bias-free SwiGLU and sigmoid gate in
+`GroupedMoE`. The gate is computed from x, not the shared expert's output:
+`sigmoid(Linear(D, 1)(x))` has shape `[B, S, 1]` and broadcasts over D.
+`[B, S]` alone would align incorrectly from the right. The gate is independent
+per token, not a softmax competition, and does not skip shared computation.
+Gating requires a shared expert. Codex simplified the final addition and added
+eight tests for both expert backends, capacity isolation, gradients, gate input,
+registration, defaults, and invalid configuration.
+
+A shared SwiGLU of width F adds 3*D*F parameters and its corresponding active
+matrix-multiply work. Adding it alongside K=2 full-width routed experts raises
+expert compute by 50%. Selecting one fewer full-width expert, or keeping two
+half-width routed experts, preserves the original active budget in this example.
+
+Fine-grained routing already works through existing configuration: replacing
+8 experts of width F, selecting 2, with 16 of width F/2, selecting 4, preserves
+expert parameters and approximate expert matmul FLOPs. It permits more flexible
+combinations of smaller capability bundles; larger experts are not restricted
+to one feature and specialization is not guaranteed. Router scoring/dispatch
+overhead grows, and smaller matmuls can be less efficient. Balanced assignments
+per expert remain 2*T/8 = 4*T/16, so worse imbalance is not inevitable.
+
+At the learner's request, Codex forwarded `shared_hidden_dim` and
+`shared_expert_gate` through block, decoder, and training ModelConfig. Defaults
+None/False preserve routed-only behavior. Each decoder layer owns its own
+shared expert and optional gate. CLI flags and history/plot tags distinguish
+shared widths and gated/ungated runs. No output/loss/metric API changed.
+Tests check forwarding, task gradients, cached/full eval agreement, training,
+and filenames. Last verification: 475 repository tests pass (147 MoE tests),
+with targeted Ruff/ty checks passing. The toy-run discussion below completes
+this stage; next is auxiliary-loss-free balancing. Do not repeat
+the completed shared/gate implementation or its wiring.
+
+The first shared run still memorized the batch but showed different routing;
+this alone does not prove specialization or improvement. Model initialization
+previously consumed the RNG before batch creation, changing the data across
+architectures despite the same seed. At the learner's request, Codex separated
+batch RNG with its own seed-42 generator and tested identical batches across
+routed-only, shared, and gated-shared runs. No weight matching was added.
+Older plots predate this change and therefore use different data.
+
+The reviewed gated-shared-width-24 run used auxiliary coefficient 0.05, z-loss
+coefficient 0, and dropless routing. Relative to the earlier auxiliary-only plot,
+layer 1's final MaxVio is roughly 0.33 versus 0.17; layer 3 has sharper token
+preferences and higher selected mass. Task loss still approaches zero and no
+experts are unused. These visual observations do not establish better or worse
+task quality, or that common knowledge was learned. Data and later-layer
+initialization differed, and the shared branch adds 25% expert matmul work with
+default routed width 48 and K=2. The learner chose only independent batch RNG,
+not weight matching or a larger experiment framework; further runs are optional.
+
 ## Router stability and z-loss (stage 7, complete)
 
 Adding the same constant across experts for one token leaves softmax and top-k
@@ -569,11 +630,11 @@ metric implementations or start balancing losses before this experiment.
 
 ### Latest checkpoint (2026-10-21)
 
-MoE stages 1–7 are complete, including FP32 routing, z-loss integration, and the
-0.001-versus-0.01 coefficient discussion above. Next is stage 8: shared experts
-and fine-grained specialization. No shared expert has been added and the learner
-has not answered the opening motivation question; see `README.md`.
-Last verification: 459 repository tests, including 139 MoE tests, pass.
+MoE stages 1–8 are complete, including the shared/gated branch, fine-grained
+compute reasoning, toy-run discussion, and independent batch RNG. Next is stage 9:
+auxiliary-loss-free balancing and training-step updates. No correction-bias code
+or learner answer has been added yet; see `README.md` for the opening question.
+Last verification: 475 repository tests, including 147 MoE tests, pass.
 
 ### Historical checkpoint: tiny training run (2026-10-20)
 

@@ -4,6 +4,8 @@ from typing import Literal
 import torch
 from torch import nn
 
+from mlp import SwiGLU
+
 from .router import TopKRouter
 
 
@@ -118,6 +120,8 @@ class GroupedMoE(nn.Module):
         *,
         capacity_factor: float | None = None,
         drop_policy: Literal["position", "probs"] = "probs",
+        shared_hidden_dim: int | None = None,
+        shared_expert_gate: bool = False,
         expert_backend: Literal["loop", "grouped_mm"] = "grouped_mm",
     ):
         super().__init__()
@@ -131,10 +135,22 @@ class GroupedMoE(nn.Module):
             raise ValueError(
                 f"Expected capacity_factor to be finite and strictly positive, got: {capacity_factor}"
             )
+        if shared_hidden_dim is None and shared_expert_gate:
+            raise ValueError(
+                "Can't set shared expert gating when no shared expert is set."
+            )
 
         self.router = TopKRouter(d_model, num_experts, top_k)
         expert_cls = PackedExperts if expert_backend == "loop" else GroupedExperts
         self.experts = expert_cls(d_model, hidden_dim, num_experts)
+        self.shared_expert = (
+            SwiGLU(d_model, shared_hidden_dim)
+            if shared_hidden_dim is not None
+            else None
+        )
+        self.shared_expert_gate = (
+            nn.Linear(d_model, 1, bias=False) if shared_expert_gate else None
+        )
 
         self.d_model = d_model
         self.hidden_dim = hidden_dim
@@ -246,7 +262,16 @@ class GroupedMoE(nn.Module):
             dim=0, index=token_indices, source=weighted_output.to(output.dtype)
         )  # [T, D]
 
-        return output.reshape_as(x), aux_loss, z_loss  # [B, S, D], optional scalars
+        output = output.reshape_as(x)  # [B, S, D]
+        if self.shared_expert is not None:
+            shared_output = self.shared_expert(x)
+            if self.shared_expert_gate is not None:
+                gate = torch.sigmoid(self.shared_expert_gate(x))  # [B, S, 1]
+                shared_output = gate * shared_output
+
+            output += shared_output
+
+        return output, aux_loss, z_loss
 
 
 if __name__ == "__main__":

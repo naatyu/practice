@@ -4,8 +4,54 @@ import pytest
 import torch
 
 from decoder_model import DecoderCache, DecoderModel
+from mlp import SwiGLU
 from moe import GroupedMoE
 from transformer_block import TransformerBlock
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_decoder_shared_experts_are_per_layer_and_receive_task_gradients(gated):
+    model = DecoderModel(
+        vocab_size=16,
+        d_model=16,
+        num_heads=2,
+        max_seq_len=8,
+        n_layers=2,
+        hidden_dim=32,
+        num_experts=4,
+        top_k=2,
+        shared_hidden_dim=24,
+        shared_expert_gate=gated,
+    )
+    shared_experts = []
+    for block in model.blocks:
+        assert isinstance(block.ffn, GroupedMoE)
+        assert isinstance(block.ffn.shared_expert, SwiGLU)
+        assert block.ffn.shared_expert.down_proj.in_features == 24
+        assert (block.ffn.shared_expert_gate is not None) == gated
+        shared_experts.append(block.ffn.shared_expert)
+    assert shared_experts[0] is not shared_experts[1]
+    tokens = torch.tensor([[0, 1, 2, 3]])
+    output = model(tokens)
+    output.logits.square().mean().backward()
+    for block in model.blocks:
+        assert isinstance(block.ffn, GroupedMoE)
+        assert isinstance(block.ffn.shared_expert, SwiGLU)
+        gradient = block.ffn.shared_expert.up_proj.weight.grad
+        assert gradient is not None and torch.isfinite(gradient).all()
+        assert gradient.abs().sum() > 0
+        if gated:
+            assert block.ffn.shared_expert_gate is not None
+            gradient = block.ffn.shared_expert_gate.weight.grad
+            assert gradient is not None and gradient.abs().sum() > 0
+
+    model.eval()
+    with torch.no_grad():
+        full = model(tokens).logits
+        prefill = model(tokens[:, :2], use_cache=True)
+        suffix = model(tokens[:, 2:], prefill.kv_caches, use_cache=True)
+    torch.testing.assert_close(full[:, 2:], suffix.logits, atol=1e-5, rtol=1e-5)
+    assert suffix.aux_loss is None and suffix.z_loss is None
 
 
 @pytest.fixture

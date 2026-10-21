@@ -35,6 +35,10 @@ mean of independently computed per-MoE-layer balancing losses during training.
 `None` for dense models and in evaluation. Task loss stays in training.
 Codex implemented this explicit-return plumbing and updated its callers/tests.
 
+MoE configurations also forward `shared_hidden_dim` and `shared_expert_gate` to
+every block; each layer owns separate shared parameters. Defaults None/False
+leave shared experts disabled. Codex added this forwarding and integration tests.
+
 ### Discussion questions
 
 1. Why does a language model produce vocabulary logits at every sequence

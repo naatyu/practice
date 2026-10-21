@@ -32,6 +32,8 @@ class ModelConfig:
     tie_weights: bool = True
     capacity_factor: float | None = None
     drop_policy: Literal["position", "probs"] = "probs"
+    shared_hidden_dim: int | None = None
+    shared_expert_gate: bool = False
 
 
 @dataclass
@@ -70,8 +72,13 @@ def train_moe(
         fused=optim_config.fused and torch.device(device).type == "cuda",
     )
     loss_fn = CrossEntropy()
+    # Keep the data independent of random draws during model initialization.
+    batch_generator = torch.Generator(device=device).manual_seed(42)
     batch = torch.randint(
-        model_config.vocab_size, (8, model_config.max_seq_len), device=device
+        model_config.vocab_size,
+        (8, model_config.max_seq_len),
+        device=device,
+        generator=batch_generator,
     )  # [B, S] token IDs, not embeddings.
 
     for moe in moes:
@@ -108,6 +115,8 @@ def train_moe(
                 "z_loss_coefficient": z_loss_coefficient,
                 "capacity_factor": model_config.capacity_factor,
                 "drop_policy": model_config.drop_policy,
+                "shared_hidden_dim": model_config.shared_hidden_dim,
+                "shared_expert_gate": model_config.shared_expert_gate,
                 "layers": layer_metrics,
             }
         )
@@ -156,6 +165,11 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         if capacity is not None
         else ", dropless"
     )
+    shared_width = history[0].get("shared_hidden_dim")
+    if shared_width is not None:
+        gate_tag = "gated" if history[0].get("shared_expert_gate", False) else "ungated"
+        run_tag += f"_shared_{shared_width}_{gate_tag}"
+        run_label += f", shared width = {shared_width} ({gate_tag})"
     output_path = Path(output_path)
     output_path = output_path.with_name(
         f"{output_path.stem}_{run_tag}{output_path.suffix}"
@@ -315,6 +329,8 @@ if __name__ == "__main__":
     parser.add_argument("--z-loss-coefficient", type=float, default=0.0)
     parser.add_argument("--capacity-factor", type=float, default=None)
     parser.add_argument("--drop-policy", choices=["position", "probs"], default="probs")
+    parser.add_argument("--shared-hidden-dim", type=int, default=None)
+    parser.add_argument("--shared-expert-gate", action="store_true")
     parser.add_argument(
         "--output",
         default="training/plots/moe_metrics.png",
@@ -323,7 +339,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
     history = train_moe(
-        ModelConfig(capacity_factor=args.capacity_factor, drop_policy=args.drop_policy),
+        ModelConfig(
+            capacity_factor=args.capacity_factor,
+            drop_policy=args.drop_policy,
+            shared_hidden_dim=args.shared_hidden_dim,
+            shared_expert_gate=args.shared_expert_gate,
+        ),
         OptimizerConfig(),
         steps=args.steps,
         device=args.device,

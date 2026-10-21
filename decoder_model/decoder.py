@@ -40,6 +40,8 @@ class DecoderModel(nn.Module):
         tie_weights: bool = True,
         capacity_factor: float | None = None,
         drop_policy: Literal["position", "probs"] = "probs",
+        shared_hidden_dim: int | None = None,
+        shared_expert_gate: bool = False,
     ):
         super().__init__()
 
@@ -75,6 +77,8 @@ class DecoderModel(nn.Module):
                     top_k=top_k,
                     capacity_factor=capacity_factor,
                     drop_policy=drop_policy,
+                    shared_hidden_dim=shared_hidden_dim,
+                    shared_expert_gate=shared_expert_gate,
                 )
                 for _ in range(n_layers)
             ]

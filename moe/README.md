@@ -14,9 +14,9 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 4. Decoder integration, training, and routing diagnostics
 5. Auxiliary load-balancing loss
 6. Expert capacity, overflow, and dropless routing
-7. Router numerical stability and z-loss — stages 1–7 complete
-8. Shared experts and fine-grained expert specialization — active
-9. Auxiliary-loss-free balancing and training-step updates
+7. Router numerical stability and z-loss
+8. Shared experts and fine-grained expert specialization — stages 1–8 complete
+9. Auxiliary-loss-free balancing and training-step updates — active
 10. MoE FLOPs, memory, and expert-parallel systems
 11. LatentMoE, normalization, and SiTU-GLU
 12. Quantile balancing: exact implementation to histogram estimation
@@ -24,8 +24,8 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 
 ## Current checkpoint
 
-Stages 1–7 are complete. Resume with stage 8: shared experts and fine-grained
-specialization. Capacity and z-loss conclusions are recorded in `SOLUTIONS.md`.
+Stages 1–8 are complete. Resume with stage 9: auxiliary-loss-free balancing and
+training-step updates. Completed reasoning and experiments are in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -66,7 +66,8 @@ The tiny training run logs seven router diagnostics plus two drop-rate metrics p
 layer and resets them together
 once per optimizer step. Auxiliary balancing loss is implemented and wired into
 training with a configurable coefficient (zero by default). Capacity settings
-are passed through the decoder to each MoE layer; shared experts are not added yet.
+are passed through the decoder to each MoE layer, along with optional shared
+expert width and gating. Shared computation is outside routed capacity/metrics.
 `GroupedMoE` supports
 an optional `capacity_factor`: `None` is dropless; a positive factor caps each
 expert at `ceil(factor * B*S*K/E)` assignments. `drop_policy="probs"` (default)
@@ -125,13 +126,13 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All six test files are assistant-authored. There are 139 passing MoE tests.
+All six test files are assistant-authored. There are 147 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
 ## Resume here (2026-10-21)
 
-Stages 1–7 are done. Do not repeat integration, diagnostics, capacity, FP32 router
+Stages 1–8 are done. Do not repeat integration, diagnostics, capacity, FP32 router
 computation, or z-loss wiring. The learner wrote the losses/router changes;
 Codex wrote tests and requested model/training/plot plumbing.
 
@@ -142,13 +143,32 @@ preferences and lower selected mass are not themselves quality failures; both
 runs still memorize the batch. Neither large-scale stability nor generalization
 has been demonstrated. Details and plot links are in `SOLUTIONS.md`.
 
-Stage 8 has not been implemented. Opening question, still unanswered: what might
-be useful about an expert that every token passes through, alongside selected
-routed experts? Start with the motivation for shared experts, then agree on the
-combination and shapes before coding. Fine-grained specialization follows.
-Ask one question at a time; do not supply the answer or implement it in advance.
+Stage 8's shared branch and optional input-conditioned sigmoid gate are implemented
+and tested. The learner understands common-versus-specialized knowledge, gate
+broadcasting, and fine-grained routing's parameter/compute tradeoffs. Codex added
+tests and requested forwarding through block/decoder/ModelConfig, plus CLI and
+plot tags. Each layer owns separate shared parameters; defaults remain off.
+Do not repeat these tasks or introduce another dispatch implementation.
 
-Last verification: 459 repository tests pass, including 139 MoE tests. Targeted
+The auxiliary-0.05, z-0, gated-shared-width-24 run was reviewed: task loss still
+approaches zero, while routing changes and some layers have worse load balance.
+This is not evidence of improved specialization or generalization. Shared width
+24 adds 25% expert matmul work to default routed width 48/K=2. Existing expert
+count, width, and top-k settings already support fine-grained routing; no separate
+implementation is required. Further toy comparisons are optional, not a blocker.
+
+Batch generation now uses a separate seed-42 generator, independent of model
+initialization. This changes the data relative to older plots; weights remain
+unmatched across architectures, as requested by the learner.
+
+Stage 9 has not been implemented. Opening question, still unanswered: if an
+expert is overloaded and we add a per-expert correction to selection scores,
+should its correction increase or decrease, and why? Then explore selection
+versus mixing weights, non-gradient state, and once-per-training-step updates.
+Keep the existing balancing loss available as a baseline. Do not implement or
+record answers before discussing them with the learner.
+
+Last verification: 475 repository tests pass, including 147 MoE tests. Targeted
 MoE/model/training Ruff and ty checks pass. GPU grouped-kernel performance
 remains unmeasured.
 Keep explanations short, ask one question at a time, and let the learner write

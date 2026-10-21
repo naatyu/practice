@@ -26,6 +26,8 @@ class TransformerBlock(nn.Module):
         *,
         capacity_factor: float | None = None,
         drop_policy: Literal["position", "probs"] = "probs",
+        shared_hidden_dim: int | None = None,
+        shared_expert_gate: bool = False,
     ):
         super().__init__()
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
@@ -52,6 +54,8 @@ class TransformerBlock(nn.Module):
                 top_k,
                 capacity_factor=capacity_factor,
                 drop_policy=drop_policy,
+                shared_hidden_dim=shared_hidden_dim,
+                shared_expert_gate=shared_expert_gate,
             )
         else:
             self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)

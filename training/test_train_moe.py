@@ -1,13 +1,77 @@
 """AI-authored checks for the tiny MoE training/logging experiment."""
 
 import math
+from dataclasses import replace
 
 import pytest
 import torch
 
+from decoder_model import DecoderModel
+from mlp import SwiGLU
 from moe import GroupedMoE
 from moe.router import TopKRouter
 from training.train_moe import ModelConfig, OptimizerConfig, plot_metrics, train_moe
+
+
+def test_batch_is_fixed_across_steps_and_architecture_changes(
+    small_config, monkeypatch
+):
+    batches = []
+    original = DecoderModel.forward
+
+    def capture(self, input_ids, *args, **kwargs):
+        batches.append(input_ids.detach().clone())
+        return original(self, input_ids, *args, **kwargs)
+
+    monkeypatch.setattr(DecoderModel, "forward", capture)
+    configs = [
+        small_config,
+        replace(small_config, shared_hidden_dim=24),
+        replace(small_config, shared_hidden_dim=24, shared_expert_gate=True),
+    ]
+    for config in configs:
+        train_moe(config, OptimizerConfig(), steps=2)
+    assert len(batches) == 6
+    for batch in batches[1:]:
+        torch.testing.assert_close(batch, batches[0])
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_training_config_enables_shared_expert_in_every_layer(
+    small_config, monkeypatch, gated
+):
+    calls = []
+    original = SwiGLU.forward
+
+    def capture(self, x):
+        calls.append(x.shape)
+        assert self.down_proj.in_features == 24
+        return original(self, x)
+
+    monkeypatch.setattr(SwiGLU, "forward", capture)
+    small_config.shared_hidden_dim = 24
+    small_config.shared_expert_gate = gated
+    history = train_moe(small_config, OptimizerConfig(), steps=2)
+    assert calls == [torch.Size([8, 8, 16])] * (2 * small_config.n_layers)
+    for record in history:
+        assert record["shared_hidden_dim"] == 24
+        assert record["shared_expert_gate"] == gated
+        assert math.isfinite(record["task_loss"])
+
+
+def test_shared_expert_plot_names_include_width_and_gate(small_config, tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg", force=True)
+    small_config.shared_hidden_dim = 24
+    history = train_moe(small_config, OptimizerConfig(), steps=1)
+    output = tmp_path / "metrics.png"
+    for gated in (False, True):
+        history[0]["shared_expert_gate"] = gated
+        plot_metrics(history, output)
+        gate_tag = "gated" if gated else "ungated"
+        tag = f"no_aux_dropless_shared_24_{gate_tag}"
+        assert (tmp_path / f"metrics_{tag}.png").is_file()
+        assert (tmp_path / f"metrics_{tag}_experts.png").is_file()
 
 
 @pytest.fixture

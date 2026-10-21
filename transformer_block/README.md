@@ -30,6 +30,10 @@ Hidden states keep the shape above; cache is `None` unless requested, and
 both router losses are `None` for dense FFNs or evaluation. Codex added this return
 plumbing for the later MoE exercise; the block's tensor computation is unchanged.
 
+For MoE, optional `shared_hidden_dim` and `shared_expert_gate` are forwarded to
+`GroupedMoE`; defaults None/False keep the routed-only path. The shared branch
+is combined inside MoE, before the block's existing residual addition.
+
 ### Discussion questions
 
 1. What are the two main sublayers of a decoder Transformer block?

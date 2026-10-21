@@ -81,6 +81,9 @@ uv run --extra plots python -m training.train_moe
 ```
 
 `train_moe.py` reuses `train_step` on one fixed batch, without gradient accumulation.
+Batch generation uses its own seed-42 generator, so model initialization changes
+do not change the data (for the same vocabulary, batch shape, and device).
+Model initialization remains unchanged; weights are not matched across architectures.
 It records loss, seven router metrics, and two drop-rate metrics per layer,
 then resets both requested and dropped counts through `GroupedMoE.reset_metrics()`
 once per optimizer step. `plot_metrics` appends the training setting to filenames:
@@ -92,6 +95,18 @@ The expert figure has requested shares, mean probabilities, and drop rates;
 colors identify experts and dashed lines mark equal shares or zero drops.
 Use `--steps`, `--device`, or `--output` to change the run. `--output` specifies
 the base path; the training-setting suffix is added even for custom names.
+
+`ModelConfig.shared_hidden_dim` enables an always-on shared SwiGLU per MoE layer;
+`shared_expert_gate=True` additionally learns one sigmoid gate per token. CLI:
+
+```bash
+uv run --extra plots python -m training.train_moe --shared-hidden-dim 24 --shared-expert-gate
+```
+
+Defaults None/False keep the routed-only model. History records both options;
+shared runs add `_shared_24_gated` (or `_ungated`) to plot names. These parameters
+and FLOPs are additional unless routed widths/top-k are adjusted; router metrics
+and capacity still concern routed experts only. Codex added this wiring/tests.
 
 The decoder returns `DecoderOutput`; both training helpers consume its logits
 and optional live balancing/z-losses. They backpropagate

@@ -20,8 +20,10 @@ are implemented and integrated into training. Coefficient experiments and their
 balance/task-loss tradeoffs have been discussed. Capacity policies, overflow
 metrics, and decoder/training configuration are implemented. The capacity run
 and overflow/headroom tradeoffs have been discussed. FP32 routing, z-loss,
-training integration, and coefficient interpretation complete MoE stages 1–7.
-Resume with stage 8: shared experts and fine-grained specialization;
+training integration, and coefficient interpretation are complete. Shared experts,
+optional gates, fine-grained compute reasoning, and a toy-run discussion complete
+MoE stages 1–8. Batch generation now has an independent RNG; model weights remain
+unmatched across architectures. Resume with stage 9: auxiliary-loss-free balancing;
 see `moe/README.md`.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
@@ -327,8 +329,9 @@ written; the implementation file remains intentionally empty.
    overflow diagnostics, training wiring, and capacity experiment interpretation
 7. Router numerical stability and z-loss — done; FP32 router, loss, training
    integration, tests, and coefficient experiment interpretation
-8. Shared experts and fine-grained expert specialization — active
-9. Auxiliary-loss-free balancing and training-step updates
+8. Shared experts and fine-grained expert specialization — done; shared branch,
+   optional gate, decoder/training wiring, compute reasoning, and toy-run interpretation
+9. Auxiliary-loss-free balancing and training-step updates — active
 10. MoE FLOPs, memory, and expert-parallel systems
 11. LatentMoE, normalization, and SiTU-GLU
 12. Quantile balancing: exact implementation to histogram estimation
@@ -408,7 +411,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: shared experts and fine-grained specialization]
+-> MoE [active: auxiliary-loss-free balancing and training-step updates]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 
