@@ -13,8 +13,8 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
      ModuleList reference before decoder integration.
 4. Decoder integration, training, and routing diagnostics
 5. Auxiliary load-balancing loss
-6. Expert capacity, overflow, and dropless routing
-7. Router numerical stability and z-loss
+6. Expert capacity, overflow, and dropless routing — stages 1–6 complete
+7. Router numerical stability and z-loss — active
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems
@@ -23,6 +23,9 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 ## Current checkpoint
+
+Stages 1–6 are complete. Resume with stage 7: router numerical stability and
+z-loss. Capacity experiment conclusions are recorded in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -102,12 +105,14 @@ uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --
 
 Implement progressively, per layer, rather than copying an entire framework:
 
-- First: assignment counts/shares, unused experts, and maximum load violation
+- Implemented: assignment counts/shares, unused experts, and maximum load violation
   (MaxVio); accumulate counts over an optimizer step, then report and reset.
-- Next: mean all-expert probabilities, per-token router entropy, and selected
-  probability mass before top-k renormalization, alongside task/validation loss.
-- Later: balancing loss and z-loss separately, dropped-assignment rate, balancing
-  biases, and per-device load/throughput as those mechanisms are introduced.
+- Implemented: mean all-expert probabilities, per-token router entropy, selected
+  probability mass before top-k renormalization, and global/per-expert drop rates.
+  Training also logs task, total, and unweighted balancing loss separately.
+- Next: z-loss and router precision; later, balancing biases and per-device
+  load/throughput as those mechanisms are introduced. Validation is still needed
+  for quality claims beyond the fixed-batch memorization experiment.
 
 Counts are detached diagnostics, not a differentiable balancing objective.
 Exclude padding when supported; do not conflate step-level balance with balance
@@ -121,7 +126,31 @@ All six test files are assistant-authored. There are 130 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
-## Resume here (2026-10-20)
+## Resume here (2026-10-21)
+
+Stages 1–6 are done; do not repeat decoder integration, metric implementation,
+loss plumbing, or capacity dispatch. The capacity-factor 1.1, score-priority run
+with auxiliary coefficient 0.05 was compared visually with the dropless run:
+task loss still approaches zero, while overflow is mostly small after the early
+steps. This is not a timing or generalization benchmark. A same-factor
+position-versus-score experiment remains optional, not a blocker for stage 7.
+
+Stage 7 order: softmax shift invariance, low-precision router pitfalls, z-loss
+intuition, then implementation and assistant-authored tests. Start by comparing
+softmax and top-k for one token's logits `[2, 1, 0]` and `[102, 101, 100]`.
+The learner has not answered this question yet; no z-loss code has been added.
+Use [Switch Transformers](https://arxiv.org/html/2101.03961) for router precision
+and [ST-MoE](https://arxiv.org/abs/2202.08906) for z-loss.
+
+Last verification: 444 repository tests pass, including 130 MoE tests; targeted
+Ruff/ty checks pass. GPU grouped-kernel performance remains unmeasured.
+Keep explanations short, ask one question at a time, and let the learner write
+the algorithm. Codex writes tests and requested plumbing.
+
+### Historical checkpoint (2026-10-20)
+
+The following records earlier progress; pending tasks below have since been
+completed. The current resume instructions are above.
 
 Step 3 and the decoder-integration part of step 4 are complete. The learner
 explained that MoE replaces the FFN while preserving `[B, S, d_model]`, so

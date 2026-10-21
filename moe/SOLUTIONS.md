@@ -96,7 +96,7 @@ assignment balance while still reaching near-zero task loss; it did not establis
 a quality penalty. Its total loss near 0.5 is expected from an unweighted auxiliary
 loss near 1, not evidence of failed memorization. These single-batch experiments
 do not measure generalization. Auxiliary balancing is complete for this stage.
-Next: expert capacity and overflow, compared with the existing dropless dispatch.
+Capacity and overflow were completed next, as recorded below.
 
 ## Capacity-limited dispatch: keep first
 
@@ -170,8 +170,35 @@ Tests verify forwarding to all layers, per-step count reset, both policies, and
 separate plot filenames. A short CPU CLI run verifies end-to-end plotting.
 Capacity is per forward, including eval: score-priority dropping can depend on
 future tokens in the current chunk and cached/full outputs need not agree when
-capacity is enabled. Keep dropless inference as the reference. Next: capacity
-factor/policy experiments and their task-loss/overflow tradeoffs.
+capacity is enabled. Keep dropless inference as the reference.
+
+### Capacity experiment and interpretation (2026-10-21)
+
+Capacity mainly bounds per-expert work and dispatch/activation storage, helping
+control stragglers. It does not shrink expert weights or optimizer state, and
+does not by itself guarantee a speedup. Dropless execution remains a valid path.
+
+The learner's factor-1.1, `probs`, auxiliary-coefficient-0.05 run was compared
+visually with the dropless 0.05 run. Both reach near-zero fixed-batch task loss.
+Early aggregate drop-rate peaks are roughly 10–14% in the most affected layers;
+later most layers are near zero, with one around 2%. An individual expert can
+drop roughly a third of its requests early without a third of all assignments
+being dropped. These are approximate plot readings, not raw-history statistics.
+They establish neither generalization nor runtime/VRAM improvements.
+
+With four experts, equal requested shares are 25%; factor 1.1 allows about 27.5%
+per expert, subject to rounding. Zero drops therefore does not mean perfect
+balance. Increasing capacity cannot increase drops for fixed routing decisions,
+but separate training runs can learn different routes. Factor 1.5 gives more
+headroom, not a universal guarantee of zero overflow.
+
+The learner correctly derived a sufficient no-drop factor: each of T tokens
+can select a given expert at most once, so its maximum load is T, versus a
+balanced load of T*K/E. Factor E/K therefore guarantees enough capacity for
+standard distinct top-k routing: E=4 and K=2 gives factor 2.
+
+Stages 1–6 are complete. Comparing position and score priority at the same
+factor is an optional follow-up. Next: stage 7, router stability and z-loss.
 
 ## Naive weighted expert combination
 
@@ -462,7 +489,18 @@ metric implementations or start balancing losses before this experiment.
 
 ## Handoff
 
-### Latest checkpoint: tiny training run (2026-10-20)
+### Latest checkpoint (2026-10-21)
+
+MoE stages 1–6 are complete: expert execution, decoder integration, diagnostics,
+training, auxiliary balancing, and capacity policies/metrics. The coefficient
+and capacity experiments are interpreted above. Resume with stage 7: softmax
+shift invariance, router precision, and z-loss. No z-loss implementation or
+learner answer has been recorded yet. See `README.md` for the opening question.
+Last verification: 444 repository tests, including 130 MoE tests, pass.
+
+### Historical checkpoint: tiny training run (2026-10-20)
+
+Pending tasks and test counts below describe earlier sessions, not current work.
 
 The learner's `training/train_moe.py` now reuses `train_step` on one full batch,
 without gradient accumulation.

@@ -18,8 +18,9 @@ tested. A tiny training runner now logs/plots per-layer diagnostics and resets
 once per optimizer step. Auxiliary load-balancing loss and explicit loss returns
 are implemented and integrated into training. Coefficient experiments and their
 balance/task-loss tradeoffs have been discussed. Capacity policies, overflow
-metrics, and decoder/training configuration are implemented. Resume with
-capacity-factor/policy experiments; see `moe/README.md` for the checkpoint.
+metrics, and decoder/training configuration are implemented. The capacity run
+and overflow/headroom tradeoffs have been discussed, completing MoE stages 1–6.
+Resume with stage 7: router numerical stability and z-loss; see `moe/README.md`.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -320,10 +321,9 @@ written; the implementation file remains intentionally empty.
    and selectable loop/grouped-MM execution tested on CPU and benchmarked
 4. Decoder integration, tiny training run, and routing diagnostics — done
 5. Auxiliary load-balancing loss — done, including coefficient experiments
-6. Expert capacity, overflow, and dropless routing — active; position/score-priority
-   dispatch, overflow diagnostics, and training wiring implemented/tested;
-   compare capacity factors/policies next
-7. Router numerical stability and z-loss
+6. Expert capacity, overflow, and dropless routing — done; both drop policies,
+   overflow diagnostics, training wiring, and capacity experiment interpretation
+7. Router numerical stability and z-loss — active
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems
@@ -405,7 +405,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: expert capacity, overflow, and dropless routing]
+-> MoE [active: router numerical stability and z-loss]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 
