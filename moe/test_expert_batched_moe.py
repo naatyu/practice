@@ -15,13 +15,15 @@ from moe.router import TopKRouter
 def test_outputs_and_gradients_match_naive(top_k, dtype):
     torch.manual_seed(20)
     naive = NaiveMoe(3, 5, 4, top_k).to(dtype)
+    naive.router.float()
     batched = ExpertBatchedMoe(3, 5, 4, top_k).to(dtype)
+    batched.router.float()
     batched.load_state_dict(naive.state_dict())
     x_naive = torch.randn(2, 4, 3, dtype=dtype, requires_grad=True)
     x_batched = x_naive.detach().clone().requires_grad_()
 
-    expected, expected_aux = naive(x_naive)
-    actual, actual_aux = batched(x_batched)
+    expected, expected_aux, _ = naive(x_naive)
+    actual, actual_aux, _ = batched(x_batched)
     torch.testing.assert_close(actual_aux, expected_aux)
     assert actual.shape == x_batched.shape
     torch.testing.assert_close(actual, expected)
@@ -51,7 +53,7 @@ class FixedRouter(TopKRouter):
         # Expert 2 appears in different slots and in both batch rows.
         ids = torch.tensor([[[0, 2], [2, 1]], [[2, 0], [1, 0]]], device=x.device)
         weights = x.new_tensor([[[0.7, 0.3], [0.6, 0.4]], [[0.2, 0.8], [0.9, 0.1]]])
-        return ids, weights, None
+        return ids, weights, None, None
 
 
 class RecordingExpert(nn.Module):
@@ -72,7 +74,7 @@ def test_controlled_dispatch_across_batches_slots_and_unused_expert():
     model.experts = nn.ModuleList(experts)
     x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
 
-    output, _ = model(x)
+    output, _, _ = model(x)
 
     # Each token receives BOTH contributions, with the weight of its own slot.
     expected_scales = x.new_tensor([[2.6, 2.0], [2.4, -0.7]])

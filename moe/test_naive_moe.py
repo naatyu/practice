@@ -16,7 +16,7 @@ class FixedRouter(TopKRouter):
     def forward(self, x):
         ids = torch.tensor([[[0, 2], [1, 0]]], device=x.device)
         weights = x.new_tensor([[[0.25, 0.75], [0.6, 0.4]]])
-        return ids, weights, None
+        return ids, weights, None, None
 
 
 class RecordingExpert(nn.Module):
@@ -37,7 +37,7 @@ def test_controlled_routing_weights_and_original_token_inputs():
     model.experts = nn.ModuleList(recording_experts)
     x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
 
-    output, _ = model(x)
+    output, _, _ = model(x)
 
     # Token 0: (.25*2 + .75*4)*x = 3.5*x.
     # Token 1: (.6*(-1) + .4*2)*x = .2*x.
@@ -53,11 +53,12 @@ def test_controlled_routing_weights_and_original_token_inputs():
 def test_matches_dense_reference_outputs_and_gradients(top_k):
     torch.manual_seed(10)
     model = NaiveMoe(3, 5, 4, top_k).double()
+    model.router.float()
     x = torch.randn(2, 3, 3, dtype=torch.float64, requires_grad=True)
     inputs = (x, *model.parameters())
 
-    actual, _ = model(x)
-    ids, weights, _ = model.router(x)
+    actual, _, _ = model(x)
+    ids, weights, _, _ = model.router(x)
     # Evaluating every expert is acceptable only in this small test reference.
     all_outputs = torch.stack([expert(x) for expert in model.experts], dim=-2)
     selected = all_outputs.gather(

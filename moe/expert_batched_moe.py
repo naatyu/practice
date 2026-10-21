@@ -14,11 +14,15 @@ class ExpertBatchedMoe(nn.Module):
             [SwiGLU(d_model, hidden_dim) for _ in range(num_experts)]
         )
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
         x: [B, S, D]
         """
-        experts, weights, aux_loss = self.router(x)  # [B, S, K], [B, S, K], scalar
+        experts, weights, aux_loss, z_loss = self.router(
+            x
+        )  # [B, S, K], [B, S, K], scalar
         output = torch.zeros_like(x)  # [B, S, D]
 
         for expert_id, expert in enumerate(self.experts):
@@ -32,4 +36,4 @@ class ExpertBatchedMoe(nn.Module):
 
             output[batch_indices, sequence_indices] += weighted_output
 
-        return output, aux_loss
+        return output, aux_loss, z_loss

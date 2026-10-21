@@ -7,11 +7,12 @@ from torch.optim import Optimizer
 
 @dataclass
 class TrainingLoss:
-    """Detached total, task, and optional unweighted auxiliary losses for logging."""
+    """Detached total, task, and optional unweighted router losses for logging."""
 
     loss: torch.Tensor
     task_loss: torch.Tensor
     aux_loss: torch.Tensor | None
+    z_loss: torch.Tensor | None = None
 
 
 def train_step(
@@ -23,6 +24,7 @@ def train_step(
     max_grad_norm: float | None = None,
     *,
     aux_loss_coefficient: float = 0.0,
+    z_loss_coefficient: float = 0.0,
 ) -> TrainingLoss:
     """Run one shifted language-model training step.
 
@@ -40,6 +42,8 @@ def train_step(
     loss = task_loss
     if output.aux_loss is not None:
         loss = loss + aux_loss_coefficient * output.aux_loss
+    if output.z_loss is not None:
+        loss = loss + z_loss_coefficient * output.z_loss
     loss.backward()
 
     if max_grad_norm is not None:
@@ -51,6 +55,7 @@ def train_step(
         loss.detach(),
         task_loss.detach(),
         output.aux_loss.detach() if output.aux_loss is not None else None,
+        output.z_loss.detach() if output.z_loss is not None else None,
     )
 
 
@@ -62,6 +67,7 @@ def train_accumulation_step(
     max_grad_norm: float | None = None,
     *,
     aux_loss_coefficient: float = 0.0,
+    z_loss_coefficient: float = 0.0,
 ) -> TrainingLoss:
     """Accumulate gradients over shifted language-model microbatches.
 
@@ -78,6 +84,7 @@ def train_accumulation_step(
     microbatch_losses = []
     task_losses = []
     aux_losses = []
+    z_losses = []
 
     for input_ids, labels in microbatches:
         output = model(input_ids)
@@ -89,6 +96,9 @@ def train_accumulation_step(
         if output.aux_loss is not None:
             loss = loss + aux_loss_coefficient * output.aux_loss
             aux_losses.append(output.aux_loss.detach())
+        if output.z_loss is not None:
+            loss = loss + z_loss_coefficient * output.z_loss
+            z_losses.append(output.z_loss.detach())
         scaled_loss = loss / num_microbatches
         scaled_loss.backward()
         microbatch_losses.append(scaled_loss.detach())
@@ -103,4 +113,5 @@ def train_accumulation_step(
         torch.stack(microbatch_losses).sum(),
         torch.stack(task_losses).mean(),
         torch.stack(aux_losses).mean() if aux_losses else None,
+        torch.stack(z_losses).mean() if z_losses else None,
     )

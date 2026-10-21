@@ -19,8 +19,10 @@ once per optimizer step. Auxiliary load-balancing loss and explicit loss returns
 are implemented and integrated into training. Coefficient experiments and their
 balance/task-loss tradeoffs have been discussed. Capacity policies, overflow
 metrics, and decoder/training configuration are implemented. The capacity run
-and overflow/headroom tradeoffs have been discussed, completing MoE stages 1–6.
-Resume with stage 7: router numerical stability and z-loss; see `moe/README.md`.
+and overflow/headroom tradeoffs have been discussed. FP32 routing, z-loss,
+training integration, and coefficient interpretation complete MoE stages 1–7.
+Resume with stage 8: shared experts and fine-grained specialization;
+see `moe/README.md`.
 FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -323,8 +325,9 @@ written; the implementation file remains intentionally empty.
 5. Auxiliary load-balancing loss — done, including coefficient experiments
 6. Expert capacity, overflow, and dropless routing — done; both drop policies,
    overflow diagnostics, training wiring, and capacity experiment interpretation
-7. Router numerical stability and z-loss — active
-8. Shared experts and fine-grained expert specialization
+7. Router numerical stability and z-loss — done; FP32 router, loss, training
+   integration, tests, and coefficient experiment interpretation
+8. Shared experts and fine-grained expert specialization — active
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems
 11. LatentMoE, normalization, and SiTU-GLU
@@ -405,7 +408,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: router numerical stability and z-loss]
+-> MoE [active: shared experts and fine-grained specialization]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

@@ -28,10 +28,11 @@ Do not implement the training loss or KV cache inside this exercise.
 ## Current output API
 
 The later KV-cache and MoE exercises extended this implementation. Every call
-now returns `DecoderOutput(logits, kv_caches, aux_loss)`: use `output.logits`
+now returns `DecoderOutput(logits, kv_caches, aux_loss, z_loss)`: use `output.logits`
 for predictions and `output.kv_caches` for cached generation. `aux_loss` is the
-mean of independently computed per-MoE-layer balancing losses during training;
-it is `None` for dense models and in evaluation. Task loss stays in training.
+mean of independently computed per-MoE-layer balancing losses during training.
+`z_loss` is averaged separately across the same layers. Both are unweighted and
+`None` for dense models and in evaluation. Task loss stays in training.
 Codex implemented this explicit-return plumbing and updated its callers/tests.
 
 ### Discussion questions

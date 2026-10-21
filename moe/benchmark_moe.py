@@ -54,7 +54,7 @@ def measure(
     def forward_backward():
         model.zero_grad(set_to_none=True)
         x.grad = None
-        output, _ = model(x)
+        output, _, _ = model(x)
         output.square().mean().backward()
 
     run = forward_backward if backward else forward

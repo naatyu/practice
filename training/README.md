@@ -24,7 +24,7 @@ cross-entropy `ignore_index`. The function must:
 - Run backward propagation.
 - Optionally clip the global gradient norm.
 - Perform one optimizer update.
-- Return detached total/task/auxiliary loss details for reporting (`TrainingLoss`).
+- Return detached total/task/balancing/z-loss details for reporting (`TrainingLoss`).
 
 ### Discussion questions
 
@@ -94,16 +94,19 @@ Use `--steps`, `--device`, or `--output` to change the run. `--output` specifies
 the base path; the training-setting suffix is added even for custom names.
 
 The decoder returns `DecoderOutput`; both training helpers consume its logits
-and optional live auxiliary loss. They backpropagate
-`task_loss + aux_loss_coefficient * aux_loss` and return detached `TrainingLoss`
-fields (`loss`, `task_loss`, `aux_loss`). The coefficient defaults to zero.
+and optional live balancing/z-losses. They backpropagate
+`task_loss + aux_loss_coefficient * aux_loss + z_loss_coefficient * z_loss`
+(omitting absent losses) and return detached `TrainingLoss` fields
+(`loss`, `task_loss`, `aux_loss`, `z_loss`). Both coefficients default to zero.
 For a balancing experiment, for example:
 
 ```bash
 uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --output training/plots/moe_balanced.png
 ```
 
-The plot distinguishes total, task, and unweighted auxiliary loss. Compare with
+Use `--z-loss-coefficient 0.001` to also study router stability. Nonzero z-loss
+coefficients add a `_z_0.001` filename tag, preserving existing baseline names.
+The plot distinguishes total, task, unweighted balancing loss, and unweighted z-loss. Compare with
 the zero-coefficient baseline; an auxiliary reference of 1 is not a task-loss target.
 
 Capacity settings pass from `ModelConfig` through the decoder and block to every

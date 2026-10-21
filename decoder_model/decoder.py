@@ -13,11 +13,12 @@ from .cache import DecoderCache
 
 @dataclass
 class DecoderOutput:
-    """Logits [B, S, V], optional KV cache, and mean per-MoE-layer auxiliary loss."""
+    """Logits [B, S, V], optional KV cache, and mean per-MoE-layer router losses."""
 
     logits: torch.Tensor
     kv_caches: DecoderCache | None = None
     aux_loss: torch.Tensor | None = None
+    z_loss: torch.Tensor | None = None
 
 
 class DecoderModel(nn.Module):
@@ -97,7 +98,7 @@ class DecoderModel(nn.Module):
 
         Inputs: input_ids [B, S]; optional cache with per-layer K/V
         [B, num_kv_heads, K, d_head] and an absolute next-token position.
-        Returns DecoderOutput; auxiliary loss is None for dense models or eval.
+        Returns DecoderOutput; router losses are None for dense models or eval.
         """
         if use_cache and kv_caches is not None and len(kv_caches) != len(self.blocks):
             raise ValueError(
@@ -106,12 +107,13 @@ class DecoderModel(nn.Module):
         position_offset = kv_caches.position if kv_caches is not None else 0
         updated_caches = []
         aux_losses = []
+        z_losses = []
         # Tokens embeddings, [B, S] -> [B, S, d_model]
         x = self.tok_emb(input_ids)
 
         # Loop through transformer blocks
         for i, block in enumerate(self.blocks):
-            x, updated_cache, aux_loss = block(
+            x, updated_cache, aux_loss, z_loss = block(
                 x,
                 kv_caches[i] if use_cache and kv_caches is not None else None,
                 use_cache=use_cache,
@@ -121,6 +123,8 @@ class DecoderModel(nn.Module):
                 updated_caches.append(updated_cache)
             if aux_loss is not None:
                 aux_losses.append(aux_loss)
+            if z_loss is not None:
+                z_losses.append(z_loss)
 
         # Final norm
         x = self.final_norm(x)
@@ -136,4 +140,7 @@ class DecoderModel(nn.Module):
         )
         # Balance each layer independently, then average scalar losses (not counts).
         aux_loss = torch.stack(aux_losses).mean() if aux_losses else None
-        return DecoderOutput(logits=self.lm_head(x), kv_caches=cache, aux_loss=aux_loss)
+        z_loss = torch.stack(z_losses).mean() if z_losses else None
+        return DecoderOutput(
+            logits=self.lm_head(x), kv_caches=cache, aux_loss=aux_loss, z_loss=z_loss
+        )

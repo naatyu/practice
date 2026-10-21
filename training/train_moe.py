@@ -50,6 +50,7 @@ def train_moe(
     steps: int = 100,
     device: str = "cpu",
     aux_loss_coefficient: float = 0.0,
+    z_loss_coefficient: float = 0.0,
 ) -> list[dict]:
     """Overfit one fixed batch; record metrics once per optimizer step."""
     if steps < 1:
@@ -86,6 +87,7 @@ def train_moe(
             loss_fn,
             max_grad_norm=1.0,
             aux_loss_coefficient=aux_loss_coefficient,
+            z_loss_coefficient=z_loss_coefficient,
         )
         layer_metrics = [
             {
@@ -102,6 +104,8 @@ def train_moe(
                 if losses.aux_loss is not None
                 else 0.0,
                 "aux_loss_coefficient": aux_loss_coefficient,
+                "z_loss": losses.z_loss.item() if losses.z_loss is not None else 0.0,
+                "z_loss_coefficient": z_loss_coefficient,
                 "capacity_factor": model_config.capacity_factor,
                 "drop_policy": model_config.drop_policy,
                 "layers": layer_metrics,
@@ -118,7 +122,8 @@ def train_moe(
             ]
             print(
                 f"step {step + 1:3d} | task {losses.task_loss.item():.4f} "
-                f"| aux {history[-1]['aux_loss']:.4f} | maxvio per layer {loads} "
+                f"| aux {history[-1]['aux_loss']:.4f} | z {history[-1]['z_loss']:.4f} "
+                f"| maxvio per layer {loads} "
                 f"| drop per layer {drops}"
             )
 
@@ -136,6 +141,10 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         if coefficient != 0
         else "no auxiliary loss"
     )
+    z_coefficient = history[0].get("z_loss_coefficient", 0.0)
+    if z_coefficient != 0:
+        run_tag += f"_z_{z_coefficient:g}"
+    run_label += f", z-loss coefficient = {z_coefficient:g}"
     capacity = history[0]["capacity_factor"]
     policy = history[0]["drop_policy"]
     capacity_tag = (
@@ -164,6 +173,9 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
     panels[0].plot(steps, [record["task_loss"] for record in history], label="Task")
     panels[0].plot(
         steps, [record["aux_loss"] for record in history], label="Aux (unweighted)"
+    )
+    panels[0].plot(
+        steps, [record.get("z_loss", 0.0) for record in history], label="Z (unweighted)"
     )
     panels[0].legend(fontsize="small")
     panels[0].set_title(
@@ -300,12 +312,13 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--aux-loss-coefficient", type=float, default=0.0)
+    parser.add_argument("--z-loss-coefficient", type=float, default=0.0)
     parser.add_argument("--capacity-factor", type=float, default=None)
     parser.add_argument("--drop-policy", choices=["position", "probs"], default="probs")
     parser.add_argument(
         "--output",
         default="training/plots/moe_metrics.png",
-        help="Base plot path; auxiliary-loss and capacity settings are appended automatically.",
+        help="Base plot path; balancing, nonzero z-loss, and capacity settings are appended.",
     )
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -315,5 +328,6 @@ if __name__ == "__main__":
         steps=args.steps,
         device=args.device,
         aux_loss_coefficient=args.aux_loss_coefficient,
+        z_loss_coefficient=args.z_loss_coefficient,
     )
     plot_metrics(history, args.output)

@@ -1,5 +1,83 @@
 # Mixture of Experts: completed reasoning
 
+## Router stability and z-loss (stage 7, complete)
+
+Adding the same constant across experts for one token leaves softmax and top-k
+unchanged, so balancing loss cannot detect this common shift. Stable softmax
+prevents exponential overflow but cannot recover distinctions already lost to
+rounding: BF16 cannot distinguish 1000 from 999. FP32 routing and regularization
+address different parts of this problem.
+
+The log-normalizer is `log(sum(exp(logits)))`, the log of the softmax denominator.
+Unlike softmax, it increases by c when all logits increase by c. Z-loss averages
+its square across tokens, pushing positive and negative values toward zero.
+Without squaring, minimization would encourage unbounded negative drift.
+Normalized log-probabilities have logsumexp zero without requiring uniform
+probabilities. This anchors common drift, not every individual logit or balance.
+
+Bounded logits or normalized router inputs and weights with controlled scale
+are architectural alternatives, but constrain routing differently. Normalizing
+inputs alone cannot prevent weights from growing. Z-loss softly encourages
+better-scaled logits without changing the forward routing function.
+See [ST-MoE, sections 3.3–3.4](https://arxiv.org/html/2202.08906v2#S3.SS3).
+
+The learner implemented `router_z_loss`: cast `[B, S, E]` logits to FP32,
+logsumexp over E, square, then average over B and S. The coefficient stays
+outside the helper. Codex added six tests for controlled reductions, the
+zero-penalty anchor, large logits across three dtypes, and analytic gradients.
+The learner also retained raw router logits and disabled autocast around the
+FP32 projection/softmax. Casting only after a BF16 projection cannot recover
+lost distinctions. `autocast(dtype=float32)` is not the portable way to disable
+AMP: CPU rejects that target; use `enabled=False` and FP32 inputs/weights.
+Explicit whole-model dtype casts still affect router weights; this implementation
+does not override `.to()` or `.bfloat16()` to keep them FP32 automatically.
+
+Codex propagated separate unweighted losses through all MoE variants, the block,
+and `DecoderOutput`; each loss is averaged independently across MoE layers and
+is None for dense models/eval. Training applies independent coefficients before
+one backward pass, then detaches logging values. Both coefficients default to
+zero. Accumulation scales the combined objective per equal-sized microbatch.
+The tiny runner logs z-loss, exposes `--z-loss-coefficient`, and tags nonzero
+coefficients in plot filenames. A dtype cast before grouped output accumulation
+handles FP32 routing weights with low-precision experts. Tests cover projection
+dtype under CPU autocast, shift detection, gradients, per-layer averaging,
+coefficient independence, eval, logging, and filenames.
+
+### Coefficient experiments and interpretation
+
+A useful starting point is 0.001 for z-loss, versus 0.01 for balancing loss;
+these are recommended starting values, not universal optimal coefficients.
+A small educational sweep is 0, 0.0001, 0.001, and 0.01. Our decoder averages
+losses across layers; summing instead would change their effective strength.
+See [Megatron's coefficient guidance](https://docs.nvidia.com/megatron-core/developer-guide/0.15.0/api-guide/moe.html).
+
+The learner ran dropless experiments with balancing coefficient fixed at 0.05:
+
+- [Z coefficient 0.001](../training/plots/moe_metrics_aux_0.05_z_0.001_dropless.png):
+  unweighted z-loss rises from roughly 2.2 to 3.1, then appears approximately flat
+  late in the 800-step run. A rising regularizer is possible because task and
+  balancing gradients also update the router. Its weighted contribution at 3.1
+  is only 0.0031. A plateau alone does not prove the penalty prevented drift;
+  the older no-z-loss baseline did not plot this quantity.
+- [Z coefficient 0.01](../training/plots/moe_metrics_aux_0.05_z_0.01_dropless.png):
+  z-loss rises initially, then decreases late, ending around 2.5. Compared with
+  0.001, router entropy is higher, selected probability mass lower, and several
+  layers have worse late-stage MaxVio. Both runs still approach zero task loss.
+
+These are approximate visual readings, not raw-history comparisons. The stronger
+penalty controls the log-normalizer more, but has a less favorable late-stage
+load balance in this run. Calling it categorically too strong is not justified:
+higher token entropy/lower selected mass indicate softer preferences, not
+necessarily worse expert outputs. MaxVio does measure relative overload.
+No generalization or large-scale numerical-stability benefit was established.
+
+Z-loss can change routing despite softmax shift invariance: its gradients update
+the same router parameters and are not restricted to equal shifts. It penalizes
+the squared log-normalizer, not entropy, balance, or every individual logit.
+An increasing value need not represent common drift alone; relative logit
+changes can also increase it. An average near 3 is not a bound on all logits.
+Stage 7 is complete; next is shared experts and fine-grained specialization.
+
 ## Parameters versus active compute
 
 Replacing one dense MLP with eight independent experts of the same size gives
@@ -197,8 +275,8 @@ can select a given expert at most once, so its maximum load is T, versus a
 balanced load of T*K/E. Factor E/K therefore guarantees enough capacity for
 standard distinct top-k routing: E=4 and K=2 gives factor 2.
 
-Stages 1–6 are complete. Comparing position and score priority at the same
-factor is an optional follow-up. Next: stage 7, router stability and z-loss.
+This completed stages 1–6. Comparing position and score priority at the same
+factor remains an optional follow-up. Stage 7 was completed afterward, as above.
 
 ## Naive weighted expert combination
 
@@ -491,12 +569,11 @@ metric implementations or start balancing losses before this experiment.
 
 ### Latest checkpoint (2026-10-21)
 
-MoE stages 1–6 are complete: expert execution, decoder integration, diagnostics,
-training, auxiliary balancing, and capacity policies/metrics. The coefficient
-and capacity experiments are interpreted above. Resume with stage 7: softmax
-shift invariance, router precision, and z-loss. No z-loss implementation or
-learner answer has been recorded yet. See `README.md` for the opening question.
-Last verification: 444 repository tests, including 130 MoE tests, pass.
+MoE stages 1–7 are complete, including FP32 routing, z-loss integration, and the
+0.001-versus-0.01 coefficient discussion above. Next is stage 8: shared experts
+and fine-grained specialization. No shared expert has been added and the learner
+has not answered the opening motivation question; see `README.md`.
+Last verification: 459 repository tests, including 139 MoE tests, pass.
 
 ### Historical checkpoint: tiny training run (2026-10-20)
 

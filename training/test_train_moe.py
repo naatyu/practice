@@ -76,6 +76,22 @@ def test_auxiliary_coefficient_is_applied_and_losses_logged_separately(small_con
         assert math.isfinite(record["aux_loss"]) and record["aux_loss"] > 0
 
 
+def test_z_loss_coefficient_and_history(small_config):
+    history = train_moe(
+        small_config,
+        OptimizerConfig(),
+        steps=2,
+        aux_loss_coefficient=0.05,
+        z_loss_coefficient=0.001,
+    )
+    for record in history:
+        assert record["z_loss_coefficient"] == 0.001
+        assert math.isfinite(record["z_loss"]) and record["z_loss"] > 0
+        assert record["loss"] == pytest.approx(
+            record["task_loss"] + 0.05 * record["aux_loss"] + 0.001 * record["z_loss"]
+        )
+
+
 @pytest.mark.parametrize("policy", ["position", "probs"])
 def test_capacity_metrics_are_reported_and_reset_at_moe_level(
     small_config, monkeypatch, policy
@@ -110,15 +126,16 @@ def test_capacity_metrics_are_reported_and_reset_at_moe_level(
 
 
 @pytest.mark.parametrize(
-    "coefficient,capacity,policy,tag",
+    "coefficient,z_coefficient,capacity,policy,tag",
     [
-        (0.0, None, "probs", "no_aux_dropless"),
-        (0.01, 0.5, "position", "aux_0.01_capacity_0.5_position"),
-        (0.01, 0.5, "probs", "aux_0.01_capacity_0.5_probs"),
+        (0.0, 0.0, None, "probs", "no_aux_dropless"),
+        (0.01, 0.0, 0.5, "position", "aux_0.01_capacity_0.5_position"),
+        (0.01, 0.0, 0.5, "probs", "aux_0.01_capacity_0.5_probs"),
+        (0.01, 0.001, None, "probs", "aux_0.01_z_0.001_dropless"),
     ],
 )
 def test_plot_saves_all_metrics_without_modifying_history(
-    small_config, tmp_path, coefficient, capacity, policy, tag
+    small_config, tmp_path, coefficient, z_coefficient, capacity, policy, tag
 ):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
@@ -127,7 +144,11 @@ def test_plot_saves_all_metrics_without_modifying_history(
     small_config.capacity_factor = capacity
     small_config.drop_policy = policy
     history = train_moe(
-        small_config, OptimizerConfig(), steps=2, aux_loss_coefficient=coefficient
+        small_config,
+        OptimizerConfig(),
+        steps=2,
+        aux_loss_coefficient=coefficient,
+        z_loss_coefficient=z_coefficient,
     )
     saved = history[0]["layers"][0]["assignment_fraction"].clone()
     output = tmp_path / "plots" / "metrics.png"

@@ -296,9 +296,11 @@ def test_decoder_averages_live_losses_per_layer_and_auxiliary_only_gradients():
         top_k=2,
     )
     layer_losses = []
+    layer_z_losses = []
 
     def capture(_module, _args, output):
         layer_losses.append(output[2])
+        layer_z_losses.append(output[3])
 
     handles = [block.register_forward_hook(capture) for block in model.blocks]
     output = model(torch.randint(0, 16, (2, 6)))
@@ -308,7 +310,9 @@ def test_decoder_averages_live_losses_per_layer_and_auxiliary_only_gradients():
     assert output.aux_loss is not None and output.aux_loss.requires_grad
     assert len(layer_losses) == 3
     torch.testing.assert_close(output.aux_loss, torch.stack(layer_losses).mean())
-    output.aux_loss.backward()
+    assert output.z_loss is not None and output.z_loss.requires_grad
+    torch.testing.assert_close(output.z_loss, torch.stack(layer_z_losses).mean())
+    (output.aux_loss + output.z_loss).backward()
     for block in model.blocks:
         assert isinstance(block, TransformerBlock)
         assert isinstance(block.ffn, GroupedMoE)
@@ -338,9 +342,11 @@ def test_decoder_auxiliary_loss_is_absent_for_dense_or_eval(num_experts):
     tokens = torch.randint(0, 16, (1, 4))
     if num_experts is None:
         assert model(tokens).aux_loss is None
+        assert model(tokens).z_loss is None
     model.eval()
     output = model(tokens, use_cache=True)
     assert output.aux_loss is None
+    assert output.z_loss is None
     assert output.kv_caches is not None and output.kv_caches.position == 4
 
 

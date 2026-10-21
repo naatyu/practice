@@ -12,3 +12,10 @@ def load_balancing_loss(
     assignment_fraction = counts / counts.sum()  # [E]
 
     return probabilities.shape[-1] * torch.sum(assignment_fraction * mean_probabilities)
+
+
+def router_z_loss(logits: torch.Tensor) -> torch.Tensor:
+    """Keep the log-normalizer (log of the softmax denominator) near zero
+    for router stability; [B, S, E] -> scalar.
+    """
+    return torch.logsumexp(logits.float(), dim=-1).square().mean()

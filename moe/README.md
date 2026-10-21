@@ -13,9 +13,9 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
      ModuleList reference before decoder integration.
 4. Decoder integration, training, and routing diagnostics
 5. Auxiliary load-balancing loss
-6. Expert capacity, overflow, and dropless routing — stages 1–6 complete
-7. Router numerical stability and z-loss — active
-8. Shared experts and fine-grained expert specialization
+6. Expert capacity, overflow, and dropless routing
+7. Router numerical stability and z-loss — stages 1–7 complete
+8. Shared experts and fine-grained expert specialization — active
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems
 11. LatentMoE, normalization, and SiTU-GLU
@@ -24,8 +24,8 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 
 ## Current checkpoint
 
-Stages 1–6 are complete. Resume with stage 7: router numerical stability and
-z-loss. Capacity experiment conclusions are recorded in `SOLUTIONS.md`.
+Stages 1–7 are complete. Resume with stage 8: shared experts and fine-grained
+specialization. Capacity and z-loss conclusions are recorded in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -94,11 +94,14 @@ the stronger setting improved balance without an obvious fixed-batch task-loss p
 The learner implemented the balancing formula. Codex added explicit loss returns
 through the router/MoE/block/decoder, updated generation callers, and integrated
 the weighted objective into training. The decoder always returns `DecoderOutput`;
-its auxiliary loss is averaged across MoE layers and is `None` during evaluation.
-Task, total, and unweighted auxiliary losses are logged separately. Example:
+its `aux_loss` and `z_loss` are averaged independently across MoE layers and are
+`None` during evaluation. Task, total, and both unweighted router losses are
+logged separately. Codex added z-loss plumbing; the learner wrote the loss and
+FP32 router. Router weights must remain FP32; use AMP rather than casting the
+whole model to BF16. Example:
 
 ```bash
-uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.01 --output training/plots/moe_balanced.png
+uv run --extra plots python -m training.train_moe --aux-loss-coefficient 0.05 --z-loss-coefficient 0.001 --output training/plots/moe_balanced.png
 ```
 
 ### Routing metrics to learn
@@ -110,8 +113,8 @@ Implement progressively, per layer, rather than copying an entire framework:
 - Implemented: mean all-expert probabilities, per-token router entropy, selected
   probability mass before top-k renormalization, and global/per-expert drop rates.
   Training also logs task, total, and unweighted balancing loss separately.
-- Next: z-loss and router precision; later, balancing biases and per-device
-  load/throughput as those mechanisms are introduced. Validation is still needed
+- Implemented: FP32 router computation and separately weighted/logged z-loss.
+- Later: balancing biases and per-device load/throughput as introduced. Validation is still needed
   for quality claims beyond the fixed-batch memorization experiment.
 
 Counts are detached diagnostics, not a differentiable balancing objective.
@@ -122,28 +125,32 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All six test files are assistant-authored. There are 130 passing MoE tests.
+All six test files are assistant-authored. There are 139 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
 ## Resume here (2026-10-21)
 
-Stages 1–6 are done; do not repeat decoder integration, metric implementation,
-loss plumbing, or capacity dispatch. The capacity-factor 1.1, score-priority run
-with auxiliary coefficient 0.05 was compared visually with the dropless run:
-task loss still approaches zero, while overflow is mostly small after the early
-steps. This is not a timing or generalization benchmark. A same-factor
-position-versus-score experiment remains optional, not a blocker for stage 7.
+Stages 1–7 are done. Do not repeat integration, diagnostics, capacity, FP32 router
+computation, or z-loss wiring. The learner wrote the losses/router changes;
+Codex wrote tests and requested model/training/plot plumbing.
 
-Stage 7 order: softmax shift invariance, low-precision router pitfalls, z-loss
-intuition, then implementation and assistant-authored tests. Start by comparing
-softmax and top-k for one token's logits `[2, 1, 0]` and `[102, 101, 100]`.
-The learner has not answered this question yet; no z-loss code has been added.
-Use [Switch Transformers](https://arxiv.org/html/2101.03961) for router precision
-and [ST-MoE](https://arxiv.org/abs/2202.08906) for z-loss.
+Dropless runs with auxiliary coefficient 0.05 and z-loss coefficients 0.001 and
+0.01 were compared. The stronger coefficient lowers late-stage z-loss, produces
+softer routing, and shows worse late-stage MaxVio in several layers. Softer
+preferences and lower selected mass are not themselves quality failures; both
+runs still memorize the batch. Neither large-scale stability nor generalization
+has been demonstrated. Details and plot links are in `SOLUTIONS.md`.
 
-Last verification: 444 repository tests pass, including 130 MoE tests; targeted
-Ruff/ty checks pass. GPU grouped-kernel performance remains unmeasured.
+Stage 8 has not been implemented. Opening question, still unanswered: what might
+be useful about an expert that every token passes through, alongside selected
+routed experts? Start with the motivation for shared experts, then agree on the
+combination and shapes before coding. Fine-grained specialization follows.
+Ask one question at a time; do not supply the answer or implement it in advance.
+
+Last verification: 459 repository tests pass, including 139 MoE tests. Targeted
+MoE/model/training Ruff and ty checks pass. GPU grouped-kernel performance
+remains unmeasured.
 Keep explanations short, ask one question at a time, and let the learner write
 the algorithm. Codex writes tests and requested plumbing.
 

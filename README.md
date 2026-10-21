@@ -85,8 +85,9 @@ The active track is [Mixture of Experts](moe/README.md): routing, expert batchin
 packed weights, and selectable loop/grouped-MM execution are tested on CPU.
 Decoder integration, per-layer routing diagnostics, tiny training runs,
 auxiliary balancing, and capacity-limited/dropless dispatch are complete.
-Coefficient and capacity experiments are recorded in the MoE notes.
-Next is stage 7: router numerical stability and z-loss.
+FP32 routing and z-loss are also complete, including coefficient experiments.
+The MoE notes record the results and their limits. Next is stage 8: shared
+experts and fine-grained specialization.
 
 FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
@@ -99,7 +100,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
-| Mixture of Experts | [`moe`](moe) | Stages 1–6 complete; router stability and z-loss next |
+| Mixture of Experts | [`moe`](moe) | Stages 1–7 complete; shared experts and fine-grained specialization next |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |

@@ -164,11 +164,13 @@ created within it.
 ## Tests
 
 The later MoE exercise changed the model API to `DecoderOutput` and the training
-helpers to detached `TrainingLoss(loss, task_loss, aux_loss)` results. Codex
+helpers to detached `TrainingLoss(loss, task_loss, aux_loss, z_loss)` results. Codex
 implemented this plumbing. Per-layer balancing losses are averaged by the
 decoder, then weighted once in training before backward; logging is detached
 only afterward. `train_accumulation_step` applies its microbatch scaling to
-both objectives. This is per-microbatch balancing, not global-batch balancing,
+the combined objective, including separately weighted z-loss. Z-loss is averaged
+independently across layers and logged unweighted; both coefficients default to
+zero. This is per-microbatch balancing, not global-batch balancing,
 and the tiny MoE runner uses the simpler single-batch `train_step`.
 
 The training tests verify:

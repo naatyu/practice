@@ -27,13 +27,15 @@ def copy_reference_weights(reference, grouped):
 def test_grouped_outputs_and_gradients_match_reference(top_k, dtype):
     torch.manual_seed(31)
     reference = ExpertBatchedMoe(3, 5, 4, top_k).to(dtype)
+    reference.router.float()
     grouped = GroupedMoE(3, 5, 4, top_k, expert_backend="loop").to(dtype)
+    grouped.router.float()
     copy_reference_weights(reference, grouped)
     x_reference = torch.randn(2, 4, 3, dtype=dtype, requires_grad=True)
     x_grouped = x_reference.detach().clone().requires_grad_()
 
-    expected, expected_aux = reference(x_reference)
-    actual, actual_aux = grouped(x_grouped)
+    expected, expected_aux, _ = reference(x_reference)
+    actual, actual_aux, _ = grouped(x_grouped)
     torch.testing.assert_close(actual_aux, expected_aux)
     assert actual.shape == x_grouped.shape
     torch.testing.assert_close(actual, expected)
@@ -85,6 +87,20 @@ def test_grouped_accepts_noncontiguous_input():
     torch.testing.assert_close(grouped(x), reference(x))
 
 
+def test_grouped_bfloat16_experts_with_float32_router():
+    model = GroupedMoE(16, 32, 4, 2, expert_backend="loop").bfloat16()
+    model.router.float()  # Keep routing in FP32 when explicitly casting experts.
+    x = torch.randn(2, 3, 16, dtype=torch.bfloat16, requires_grad=True)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        output, aux, z = model(x)
+    assert output.shape == x.shape and output.dtype == x.dtype
+    assert aux is not None and z is not None
+    assert aux.dtype == z.dtype == torch.float32
+    (output.float().square().mean() + aux + z).backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert model.router.router.weight.grad is not None
+
+
 class FixedRouter(TopKRouter):
     def __init__(self):
         super().__init__(2, 4, 2)
@@ -92,11 +108,12 @@ class FixedRouter(TopKRouter):
     def forward(self, x):
         ids = torch.tensor([[[1, 3], [3, 1]]], device=x.device)
         weights = x.new_tensor([[[0.25, 0.75], [0.6, 0.4]]])
-        return ids, weights, None
+        return ids, weights, None, None
 
 
 def test_controlled_weight_permutation_and_repeated_token_accumulation():
     grouped = GroupedMoE(2, 1, 4, 2, expert_backend="loop").double()
+    grouped.router.float()
     grouped.router = FixedRouter()
     # All experts use the same gated hidden scalar, scaled by their down weights.
     with torch.no_grad():
@@ -147,12 +164,12 @@ def test_grouped_mm_outputs_and_gradients_match_expert_batched_reference(top_k):
     tokens = torch.randn(2, 3, 16)
     probe = torch.randn_like(tokens)
     reference_input = tokens.clone().requires_grad_()
-    expected, _ = reference(reference_input)
+    expected, _, _ = reference(reference_input)
     (expected * probe).sum().backward()
 
     for model in (packed, grouped):
         x = tokens.clone().requires_grad_()
-        actual, _ = model(x)
+        actual, _, _ = model(x)
         torch.testing.assert_close(actual, expected)
         (actual * probe).sum().backward()
         torch.testing.assert_close(x.grad, reference_input.grad)
@@ -211,12 +228,12 @@ class CapacityRouter(TopKRouter):
         )
 
     def forward(self, x):
-        return self.ids, self.weights, None
+        return self.ids, self.weights, None, None
 
 
 def capacity_reference(model, x, capacity, policy):
     """Python selection and token loops, independent of tensor sorts/offsets."""
-    ids, weights, _ = model.router(x)
+    ids, weights, _, _ = model.router(x)
     keep = torch.zeros_like(ids, dtype=torch.bool)
     for expert in range(model.num_experts):
         assignments = [
@@ -268,7 +285,7 @@ def test_capacity_matches_reference_outputs_gradients_and_retained_offsets(
         observed.append((args[0].detach().clone(), args[1].clone()))
 
     handle = model.experts.register_forward_pre_hook(capture)
-    actual, _ = model(x)
+    actual, _, _ = model(x)
     handle.remove()
     expected = capacity_reference(reference, reference_x, capacity, policy)
     torch.testing.assert_close(actual, expected)
@@ -313,8 +330,8 @@ def test_dropping_keeps_auxiliary_loss_and_logging_counts_before_capacity():
     limited = GroupedMoE(16, 32, 4, 2, capacity_factor=0.1, expert_backend="loop")
     limited.load_state_dict(dropless.state_dict())
     x = torch.randn(2, 3, 16)
-    _, expected_aux = dropless(x)
-    _, actual_aux = limited(x)
+    _, expected_aux, _ = dropless(x)
+    _, actual_aux, _ = limited(x)
     torch.testing.assert_close(actual_aux, expected_aux)
     torch.testing.assert_close(
         limited.router.tokens_per_expert, dropless.router.tokens_per_expert

@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from moe.losses import load_balancing_loss
+from moe.losses import load_balancing_loss, router_z_loss
 
 from .metrics import (
     assignment_entropy,
@@ -84,24 +84,26 @@ class TopKRouter(nn.Module):
 
     def forward(
         self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
         E = number of experts
         K = number of selected experts
         x: [B, S, D]
-        Returns IDs, weights [B, S, K], and a live scalar loss (None in eval).
+        Returns IDs, weights [B, S, K], balancing loss, and z-loss (None in eval).
         """
-        router_scores = self.router(x)  # [B, S, E]
-        router_scores = nn.functional.softmax(router_scores, dim=-1)  # [B, S, E]
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            router_logits = self.router(x.float())  # [B, S, E]
+            router_scores = nn.functional.softmax(router_logits, dim=-1)  # [B, S, E]
 
         scores, experts = torch.topk(
             router_scores, k=self.top_k, dim=-1
         )  # [B, S, K], [B, S, K]
 
         counts = torch.bincount(experts.flatten(), minlength=self.num_experts)  # [E]
-        aux_loss = load_balancing_loss(router_scores, counts) if self.training else None
-
         weights = scores / torch.sum(scores, dim=-1, keepdim=True)  # [B, S, K]
+
+        aux_loss = load_balancing_loss(router_scores, counts) if self.training else None
+        z_loss = router_z_loss(router_logits) if self.training else None
 
         if self.training:
             with torch.no_grad():
@@ -111,7 +113,7 @@ class TopKRouter(nn.Module):
                 self.router_entropy_sum += router_entropy(router_scores.float()).sum()
                 self.selected_prob_mass_sum += scores.float().sum()
 
-        return experts, weights, aux_loss
+        return experts, weights, aux_loss, z_loss
 
 
 if __name__ == "__main__":

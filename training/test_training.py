@@ -46,6 +46,47 @@ class AuxiliaryModel(FixedLogitModel):
         return output
 
 
+class RouterLossModel(AuxiliaryModel):
+    def __init__(self):
+        super().__init__()
+        self.z_parameter = nn.Parameter(torch.tensor(3.0))
+
+    def forward(self, input_ids):
+        output = super().forward(input_ids)
+        output.z_loss = self.z_parameter.square()
+        return output
+
+
+@pytest.mark.parametrize("accumulate", [False, True])
+@pytest.mark.parametrize("z_coefficient", [0.0, 0.01])
+def test_router_losses_have_independent_coefficients_and_detached_logs(
+    accumulate, z_coefficient
+):
+    model = RouterLossModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    tokens = torch.tensor([[0, 1, 2, 3]])
+    kwargs = {"aux_loss_coefficient": 0.25, "z_loss_coefficient": z_coefficient}
+    if accumulate:
+        result = train_accumulation_step(
+            model, optimizer, [(tokens, tokens)] * 4, CrossEntropy(), **kwargs
+        )
+    else:
+        result = train_step(model, optimizer, tokens, tokens, CrossEntropy(), **kwargs)
+    assert result.aux_loss is not None and result.z_loss is not None
+    torch.testing.assert_close(result.aux_loss, torch.tensor(4.0))
+    torch.testing.assert_close(result.z_loss, torch.tensor(9.0))
+    torch.testing.assert_close(
+        result.loss,
+        result.task_loss + 0.25 * result.aux_loss + z_coefficient * result.z_loss,
+    )
+    torch.testing.assert_close(model.aux_parameter, torch.tensor(1.9))
+    torch.testing.assert_close(
+        model.z_parameter, torch.tensor(3.0 - 0.1 * z_coefficient * 6.0)
+    )
+    for value in (result.loss, result.task_loss, result.aux_loss, result.z_loss):
+        assert not value.requires_grad and value.grad_fn is None
+
+
 @pytest.mark.parametrize("coefficient", [0.0, 0.25])
 def test_train_step_combines_losses_and_scales_auxiliary_gradients(coefficient):
     model = AuxiliaryModel()

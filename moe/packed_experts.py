@@ -168,7 +168,9 @@ class GroupedMoE(nn.Module):
 
         return metrics
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
         x: [B, S, D]
         T = B * S
@@ -178,7 +180,7 @@ class GroupedMoE(nn.Module):
         """
 
         # Token routing
-        expert_ids, expert_weights, aux_loss = self.router(
+        expert_ids, expert_weights, aux_loss, z_loss = self.router(
             x
         )  # [B, S, K], [B, S, K], scalar
 
@@ -239,9 +241,12 @@ class GroupedMoE(nn.Module):
 
         # Tokens with no retained assignments get zero MoE output, not removed rows.
         output = torch.zeros_like(tokens)  # [T, D]
-        output.index_add_(dim=0, index=token_indices, source=weighted_output)  # [T, D]
+        # FP32 routing weights can promote low-precision expert outputs.
+        output.index_add_(
+            dim=0, index=token_indices, source=weighted_output.to(output.dtype)
+        )  # [T, D]
 
-        return output.reshape_as(x), aux_loss  # [B, S, D], scalar or None
+        return output.reshape_as(x), aux_loss, z_loss  # [B, S, D], optional scalars
 
 
 if __name__ == "__main__":
