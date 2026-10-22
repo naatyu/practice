@@ -1,5 +1,135 @@
 # Mixture of Experts: completed reasoning
 
+## Auxiliary-loss-free balancing (stage 9, complete)
+
+The learner identified the balancing correction as explicit non-gradient state,
+not an optimizer-learned parameter. Adding it to selection affinities encourages
+underloaded experts when increased and discourages overloaded ones when decreased.
+For counts [10, 30, 20, 20], the target is 20: increase bias 0, decrease bias 1,
+and leave 2/3 unchanged. Small fixed adjustments encourage rather than guarantee
+balance. Keep the correction out of mixing weights: load pressure is not token
+affinity. Selection still affects which experts receive task gradients.
+
+Use one update per optimizer step after accumulating its assignments, not inside
+forward. Opposite imbalances in two microbatches can cancel; changing bias between
+them would change the policy partway through a single accumulated update.
+Auxiliary loss and bias updates are not mathematically incompatible, but our
+comparison will keep them separate: auxiliary baseline with no updates, versus
+updates with auxiliary coefficient zero. Keeping the loss function available
+does not mean both controls are active. Z-loss is a separate stability objective.
+
+The learner implemented a persistent FP32 `expert_bias` buffer [E], initialized
+to zero. Top-k uses original softmax affinities plus bias; `gather(-1, ids)`
+retrieves unbiased selected scores for normalized mixing weights and mass logging.
+`scores[ids]` indexes the batch dimension; `scores[:, :, ids]` applies the entire
+index tensor to each token. Gather matches each token's coordinates.
+Bias survives metric resets/checkpoint round trips and receives no gradients.
+Codex added four regression cases for biased train/eval selection, unbiased
+weights/metrics, gradients, checkpoint/reset behavior, and zero-bias equivalence.
+The learner implemented `update_expert_bias(rate)` under no_grad:
+target = mean requested count, direction = sign(target - counts), bias += rate
+times direction. Balanced/no-assignment counts naturally give zero updates.
+Counts remain available for logging/reset. Large rates can overshoot, causing
+overloaded/underloaded oscillation; smaller rates react more gently but slowly.
+Four additional tests cover directions, balanced/empty counts, rate zero,
+in-place buffer preservation, and unchanged counts.
+
+The learner placed updates after `train_step` and before metric reset in the
+tiny runner. Codex added CLI/history/plot-rate wiring and validation: rate must
+be finite/nonnegative, zero disables updates, and positive rates cannot be
+combined with a nonzero auxiliary coefficient in this exercise. Z-loss remains
+independent; auxiliary loss is still computed/logged but weighted by zero.
+Eight training/plot regression cases verify update timing/count windows,
+disabled defaults, invalid rates, exclusivity, and tagged filenames. Generic
+training helpers remain unchanged; this runner uses no gradient accumulation.
+The learner's softmax bias-0.001 run, with gated shared width 24, auxiliary/z-loss
+coefficients zero, and dropless dispatch, showed MaxVio near zero after roughly
+100 steps and assignment shares near 25% per expert. Assignment entropy was near
+2 bits, while per-token router entropy decreased and selected mass increased.
+Task loss still approached zero. Small fixed-update fluctuations remained.
+This demonstrates load control on the toy batch, not improved generalization;
+older auxiliary-only plots also predate the independent batch RNG.
+
+Assignment entropy summarizes the distribution of selected assignments, ignoring
+which tokens chose them or their probabilities. MaxVio sees only peak overload:
+counts [40,20,20,20] and [40,40,20,0] have identical MaxVio, but assignment
+entropies about 1.92 and 1.52 bits. High assignment entropy can coexist with low
+per-token entropy when confident token preferences spread across experts.
+
+### Sigmoid scoring and normalized diagnostics
+
+Softmax divides a fixed probability budget across experts; sigmoid scores each
+expert independently before top-k. Changing a third logit rescales the softmax
+gap between two unchanged experts, changing the influence of a fixed additive
+bias. Their sigmoid scores do not change. Final selection and normalized mixing
+still couple experts. Adding a constant changes sigmoid affinities/mixing,
+unlike softmax. Neither independent scoring nor softer mixing guarantees quality.
+See the [Loss-Free Balancing paper's Appendix C](https://arxiv.org/html/2408.15664v1#A3).
+
+The learner implemented both scoring paths, runtime validation, and two views:
+raw affinities for bias-aware selection and normalized selected mixing weights;
+full-expert-normalized affinities for balancing and diagnostics. For raw scores
+[0.8,0.7,0.4,0.1], selecting the first two gives mixing weights [0.533,0.467],
+but selected mass (0.8+0.7)/2 = 0.75. Normalizing only selected scores would always
+report mass 1. Reductions keep the expert dimension for broadcasting; accumulated
+mass sums over tokens before division by total token count in reporting.
+
+Sigmoid returns z-loss None by design: the softmax log-normalizer anchor is not
+neutral to sigmoid's common logit shift. This is our policy, not a universal ban
+on regularizing sigmoid routers. Codex forwarded scoring through MoE/block/model
+and the runner, with CLI/history/filename tags, normalized-affinity plot labels,
+no sigmoid z-loss curve, and rejection of nonzero z-loss coefficients with sigmoid.
+Softmax defaults and existing metric keys/filenames remain compatible. None in
+sigmoid history denotes inapplicable z-loss, not a measured value of zero.
+Tests cover both modes, model variants, normalized diagnostics, gradients,
+cached evaluation, validation, and plotting.
+
+### Sigmoid-versus-softmax toy-run interpretation
+
+The learner compared the two 800-step runs with bias rate 0.001, gated shared
+width 24, auxiliary/z-loss coefficients zero, and dropless routing:
+
+- [Softmax summary](../training/plots/moe_metrics_no_aux_bias_0.001_dropless_shared_24_gated.png)
+  and [expert curves](../training/plots/moe_metrics_no_aux_bias_0.001_dropless_shared_24_gated_experts.png).
+- [Sigmoid summary](../training/plots/moe_metrics_no_aux_sigmoid_bias_0.001_dropless_shared_24_gated.png)
+  and [expert curves](../training/plots/moe_metrics_no_aux_sigmoid_bias_0.001_dropless_shared_24_gated_experts.png).
+
+Sigmoid's final mean per-token normalized-affinity entropy is roughly 1.77–1.93
+bits across layers, versus 1.33–1.73 for softmax. Selected normalized mass is
+roughly 0.62–0.72 versus 0.73–0.86. The learner correctly interpreted this as
+softer relative preferences, supported by both diagnostics. Mean expert
+affinities alone cannot establish per-token sharpness: averages can hide opposing
+preferences. Both runs have nearly balanced assignments and near-zero task loss.
+
+"Less sparse" is imprecise here: both still execute K=2 routed experts per token.
+Sigmoid compresses large positive logits, so scoring alone can make normalized
+affinities flatter even for identical logits. Neither these entropy/mass values
+nor similar mean affinities establish worse predictions or weaker specialization.
+These are approximate plot readings, not generalization or performance results.
+This completes stage 9. Next: MoE FLOPs, memory, and expert-parallel systems.
+
+### Hyperparameter starting points and small sweeps
+
+| Setting | Starting point | Educational sweep, including disabled baseline |
+| --- | --- | --- |
+| Auxiliary balancing coefficient | 0.01 | 0, 0.001, 0.01, 0.1 |
+| Router z-loss coefficient | 0.001 | 0, 0.0001, 0.001, 0.01 |
+| Expert bias update rate | 0.001 | 0, 0.0001, 0.001, 0.01 |
+
+These are exploration grids, not universal safe/optimal ranges. Earlier learner
+auxiliary runs also used 0.05 and 0.5; 0.5 was a deliberately strong comparison,
+not a recommended default. Keep auxiliary coefficient zero when testing positive
+bias update rates in our runner. Hold z-loss and architecture fixed across runs.
+
+The [Loss-Free Balancing paper, section 4.3](https://arxiv.org/html/2408.15664v1)
+compares bias rates 0.0001, 0.001, and 0.01: the smallest adapted slowly, the
+largest fluctuated late, and 0.001 worked best in those experiments. Its main
+experiments use sigmoid affinities; our router supports sigmoid and softmax.
+Score scale, expert count, and update frequency affect transferability.
+[DeepSeek-V3](https://arxiv.org/html/2412.19437v2) also used rate 0.001 for most
+pretraining, then froze updates with rate zero near the end. The auxiliary/z-loss
+starting values follow [Megatron's guidance](https://docs.nvidia.com/megatron-core/developer-guide/0.15.0/api-guide/moe.html).
+
 ## Shared experts and fine-grained specialization (stage 8, complete)
 
 The learner identified the shared branch as an always-on expert outside the
@@ -628,13 +758,16 @@ metric implementations or start balancing losses before this experiment.
 
 ## Handoff
 
-### Latest checkpoint (2026-10-21)
+### Latest checkpoint (2026-10-22)
 
-MoE stages 1–8 are complete, including the shared/gated branch, fine-grained
-compute reasoning, toy-run discussion, and independent batch RNG. Next is stage 9:
-auxiliary-loss-free balancing and training-step updates. No correction-bias code
-or learner answer has been added yet; see `README.md` for the opening question.
-Last verification: 475 repository tests, including 147 MoE tests, pass.
+MoE stages 1–9 are complete, including bias-based balancing, both scoring paths,
+diagnostic/loss semantics, and the sigmoid-versus-softmax toy-run interpretation.
+Next is stage 10: MoE FLOPs, memory, and expert-parallel systems. No stage-10
+accounting implementation or learner derivation has been added yet. Start with
+linear multiply-accumulate counting, then SwiGLU/router/routed/shared costs,
+training/dispatch memory, and expert-parallel communication. See `README.md`.
+Do not repeat the completed stage-9 implementation, wiring, or experiments.
+Last verification: 506 repository tests, including 162 MoE tests, pass.
 
 ### Historical checkpoint: tiny training run (2026-10-20)
 

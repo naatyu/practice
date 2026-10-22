@@ -88,7 +88,9 @@ auxiliary balancing, and capacity-limited/dropless dispatch are complete.
 FP32 routing and z-loss are also complete, including coefficient experiments.
 Shared experts, optional gating, and fine-grained routing's compute tradeoffs
 are also covered. The MoE notes record the toy runs and their limits.
-Next is stage 9: auxiliary-loss-free balancing.
+Auxiliary-loss-free balancing and sigmoid routing are complete too, including
+their diagnostic semantics and toy-run comparison. Next is stage 10: MoE FLOPs,
+memory, and expert-parallel systems.
 
 FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
@@ -101,7 +103,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
-| Mixture of Experts | [`moe`](moe) | Stages 1–8 complete; auxiliary-loss-free balancing next |
+| Mixture of Experts | [`moe`](moe) | Stages 1–9 complete; FLOPs, memory, and expert-parallel systems next |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |

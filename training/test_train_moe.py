@@ -36,6 +36,126 @@ def test_batch_is_fixed_across_steps_and_architecture_changes(
         torch.testing.assert_close(batch, batches[0])
 
 
+def test_bias_updates_once_after_each_optimizer_step_before_count_reset(
+    small_config, monkeypatch
+):
+    events = []
+    previous_bias = {}
+    original_step = torch.optim.AdamW.step
+    original_update = TopKRouter.update_expert_bias
+
+    def step(self, *args, **kwargs):
+        result = original_step(self, *args, **kwargs)
+        events.append("step")
+        return result
+
+    def update(self, rate):
+        events.append("update")
+        assert rate == 0.001
+        assert self.tokens_per_expert.sum() == 8 * 8 * 2
+        before = previous_bias.get(id(self), torch.zeros_like(self.expert_bias))
+        torch.testing.assert_close(self.expert_bias, before)
+        counts = self.tokens_per_expert.clone()
+        original_update(self, rate)
+        torch.testing.assert_close(self.tokens_per_expert, counts)
+        previous_bias[id(self)] = self.expert_bias.clone()
+
+    monkeypatch.setattr(torch.optim.AdamW, "step", step)
+    monkeypatch.setattr(TopKRouter, "update_expert_bias", update)
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=3, bias_update_rate=0.001
+    )
+    assert events == (["step"] + ["update"] * small_config.n_layers) * 3
+    for record in history:
+        assert record["bias_update_rate"] == 0.001
+        assert record["aux_loss_coefficient"] == 0.0
+        assert record["loss"] == pytest.approx(record["task_loss"])
+
+
+def test_bias_updates_disabled_by_default(small_config, monkeypatch):
+    def unexpected_update(*args, **kwargs):
+        pytest.fail("Default training must not update expert bias")
+
+    monkeypatch.setattr(TopKRouter, "update_expert_bias", unexpected_update)
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=2, aux_loss_coefficient=0.05
+    )
+    assert all(record["bias_update_rate"] == 0.0 for record in history)
+
+
+def test_bias_updates_and_auxiliary_balancing_are_mutually_exclusive(small_config):
+    with pytest.raises(ValueError, match="cannot both be enabled"):
+        train_moe(
+            small_config,
+            OptimizerConfig(),
+            steps=1,
+            aux_loss_coefficient=0.05,
+            bias_update_rate=0.001,
+        )
+
+
+@pytest.mark.parametrize("rate", [-0.001, float("inf"), float("-inf"), float("nan")])
+def test_bias_update_rate_must_be_finite_and_nonnegative(small_config, rate):
+    with pytest.raises(ValueError, match="bias_update_rate"):
+        train_moe(small_config, OptimizerConfig(), steps=1, bias_update_rate=rate)
+
+
+@pytest.mark.parametrize("bias_rate", [0.0, 0.001])
+def test_sigmoid_training_records_mode_and_has_no_z_loss(small_config, bias_rate):
+    small_config.score_func = "sigmoid"
+    history = train_moe(
+        small_config,
+        OptimizerConfig(),
+        steps=2,
+        bias_update_rate=bias_rate,
+    )
+    for record in history:
+        assert record["score_func"] == "sigmoid" and record["z_loss"] is None
+        assert record["loss"] == pytest.approx(record["task_loss"])
+        for metrics in record["layers"]:
+            torch.testing.assert_close(
+                metrics["mean_router_probability"].sum(), torch.tensor(1.0)
+            )
+            assert 0 <= metrics["mean_selected_probability_mass"] <= 1
+
+
+def test_sigmoid_training_rejects_nonzero_z_loss(small_config):
+    small_config.score_func = "sigmoid"
+    with pytest.raises(ValueError, match="z-loss is disabled for sigmoid"):
+        train_moe(small_config, OptimizerConfig(), steps=1, z_loss_coefficient=0.001)
+
+
+def test_sigmoid_plot_labels_describe_normalized_affinities(
+    small_config, tmp_path, monkeypatch
+):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+
+    small_config.score_func = "sigmoid"
+    history = train_moe(
+        small_config, OptimizerConfig(), steps=1, bias_update_rate=0.001
+    )
+    original = Figure.savefig
+    figures = []
+
+    def capture(self, *args, **kwargs):
+        figures.append(self)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", capture)
+    plot_metrics(history, tmp_path / "metrics.png")
+    assert len(figures) == 2
+    assert "Z (unweighted)" not in figures[0].axes[0].get_legend_handles_labels()[1]
+    assert "normalized sigmoid affinities" in figures[0].axes[4].get_title()
+    assert "Selected normalized affinity mass" in figures[0].axes[5].get_title()
+    assert "Mean normalized sigmoid affinity" in figures[1].axes[1].get_title()
+    for suffix in (".png", "_experts.png"):
+        assert (
+            tmp_path / f"metrics_no_aux_sigmoid_bias_0.001_dropless{suffix}"
+        ).is_file()
+
+
 @pytest.mark.parametrize("gated", [False, True])
 def test_training_config_enables_shared_expert_in_every_layer(
     small_config, monkeypatch, gated
@@ -190,16 +310,17 @@ def test_capacity_metrics_are_reported_and_reset_at_moe_level(
 
 
 @pytest.mark.parametrize(
-    "coefficient,z_coefficient,capacity,policy,tag",
+    "coefficient,z_coefficient,bias_rate,capacity,policy,tag",
     [
-        (0.0, 0.0, None, "probs", "no_aux_dropless"),
-        (0.01, 0.0, 0.5, "position", "aux_0.01_capacity_0.5_position"),
-        (0.01, 0.0, 0.5, "probs", "aux_0.01_capacity_0.5_probs"),
-        (0.01, 0.001, None, "probs", "aux_0.01_z_0.001_dropless"),
+        (0.0, 0.0, 0.0, None, "probs", "no_aux_dropless"),
+        (0.01, 0.0, 0.0, 0.5, "position", "aux_0.01_capacity_0.5_position"),
+        (0.01, 0.0, 0.0, 0.5, "probs", "aux_0.01_capacity_0.5_probs"),
+        (0.01, 0.001, 0.0, None, "probs", "aux_0.01_z_0.001_dropless"),
+        (0.0, 0.001, 0.001, None, "probs", "no_aux_z_0.001_bias_0.001_dropless"),
     ],
 )
 def test_plot_saves_all_metrics_without_modifying_history(
-    small_config, tmp_path, coefficient, z_coefficient, capacity, policy, tag
+    small_config, tmp_path, coefficient, z_coefficient, bias_rate, capacity, policy, tag
 ):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
@@ -213,6 +334,7 @@ def test_plot_saves_all_metrics_without_modifying_history(
         steps=2,
         aux_loss_coefficient=coefficient,
         z_loss_coefficient=z_coefficient,
+        bias_update_rate=bias_rate,
     )
     saved = history[0]["layers"][0]["assignment_fraction"].clone()
     output = tmp_path / "plots" / "metrics.png"

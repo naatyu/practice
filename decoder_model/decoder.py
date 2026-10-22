@@ -42,6 +42,7 @@ class DecoderModel(nn.Module):
         drop_policy: Literal["position", "probs"] = "probs",
         shared_hidden_dim: int | None = None,
         shared_expert_gate: bool = False,
+        score_func: Literal["softmax", "sigmoid"] = "softmax",
     ):
         super().__init__()
 
@@ -79,6 +80,7 @@ class DecoderModel(nn.Module):
                     drop_policy=drop_policy,
                     shared_hidden_dim=shared_hidden_dim,
                     shared_expert_gate=shared_expert_gate,
+                    score_func=score_func,
                 )
                 for _ in range(n_layers)
             ]

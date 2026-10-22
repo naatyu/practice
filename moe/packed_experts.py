@@ -122,6 +122,7 @@ class GroupedMoE(nn.Module):
         drop_policy: Literal["position", "probs"] = "probs",
         shared_hidden_dim: int | None = None,
         shared_expert_gate: bool = False,
+        score_func: Literal["softmax", "sigmoid"] = "softmax",
         expert_backend: Literal["loop", "grouped_mm"] = "grouped_mm",
     ):
         super().__init__()
@@ -140,7 +141,7 @@ class GroupedMoE(nn.Module):
                 "Can't set shared expert gating when no shared expert is set."
             )
 
-        self.router = TopKRouter(d_model, num_experts, top_k)
+        self.router = TopKRouter(d_model, num_experts, top_k, score_func=score_func)
         expert_cls = PackedExperts if expert_backend == "loop" else GroupedExperts
         self.experts = expert_cls(d_model, hidden_dim, num_experts)
         self.shared_expert = (

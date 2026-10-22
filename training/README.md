@@ -124,6 +124,40 @@ coefficients add a `_z_0.001` filename tag, preserving existing baseline names.
 The plot distinguishes total, task, unweighted balancing loss, and unweighted z-loss. Compare with
 the zero-coefficient baseline; an auxiliary reference of 1 is not a task-loss target.
 
+For auxiliary-loss-free balancing, use `--bias-update-rate` instead of an
+auxiliary coefficient:
+
+```bash
+uv run --extra plots python -m training.train_moe --bias-update-rate 0.001
+```
+
+The default rate 0 disables updates. Positive rates update every router once
+after the optimizer step, using that step's pre-capacity requested counts,
+before metric reset. This runner rejects non-finite/negative rates and any
+positive rate combined with a nonzero auxiliary coefficient. Z-loss may still
+be enabled independently. Unweighted auxiliary loss remains logged for reference,
+but contributes nothing when its coefficient is zero. Rate appears in history,
+figure titles, and `_bias_0.001` plot tags. Codex added this wiring/validation;
+the learner wrote the update rule and its placement in the training loop.
+For a small rate sweep, try 0 (disabled), 0.0001, 0.001, and 0.01; these are
+experimental choices, not a guaranteed safe range. The combined reference table
+for balancing, z-loss, and bias rates is in
+[`moe/SOLUTIONS.md`](../moe/SOLUTIONS.md#hyperparameter-starting-points-and-small-sweeps).
+
+Select sigmoid affinities with `--score-func sigmoid` (default: softmax):
+
+```bash
+uv run --extra plots python -m training.train_moe --score-func sigmoid --bias-update-rate 0.001
+```
+
+This forwards `ModelConfig.score_func` to every router. Selection uses raw
+affinities plus bias; mixing weights use original selected affinities. Metrics
+and balancing loss use affinities normalized across all experts. Existing metric
+keys stay unchanged, while plot labels describe normalized sigmoid affinities.
+Sigmoid runs add `_sigmoid` to filenames. Their z-loss is None in history,
+prints as n/a, and has no plotted curve; nonzero z-loss coefficients are rejected.
+Codex added forwarding/reporting/tests; the learner wrote the scoring logic.
+
 Capacity settings pass from `ModelConfig` through the decoder and block to every
 MoE layer. No `--capacity-factor` means dropless; otherwise choose a policy:
 

@@ -8,8 +8,32 @@ import torch
 
 from mlp import SwiGLU
 from moe.expert_batched_moe import ExpertBatchedMoe
+from moe.naive_moe import NaiveMoe
 from moe.packed_experts import GroupedExperts, GroupedMoE, PackedExperts
 from moe.router import TopKRouter
+
+
+@pytest.mark.parametrize(
+    "model_type,backend",
+    [
+        (NaiveMoe, None),
+        (ExpertBatchedMoe, None),
+        (GroupedMoE, "loop"),
+        (GroupedMoE, "grouped_mm"),
+    ],
+)
+def test_sigmoid_scoring_is_forwarded_by_every_moe_variant(model_type, backend):
+    kwargs = {"expert_backend": backend} if backend is not None else {}
+    model = model_type(16, 32, 4, 2, score_func="sigmoid", **kwargs)
+    assert model.router.score_func == "sigmoid"
+    x = torch.randn(2, 3, 16, requires_grad=True)
+    output, aux, z = model(x)
+    assert output.shape == x.shape
+    assert aux is not None and z is None
+    output.square().mean().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    gradient = model.router.router.weight.grad
+    assert gradient is not None and gradient.abs().sum() > 0
 
 
 def copy_reference_weights(reference, grouped):

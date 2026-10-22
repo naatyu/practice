@@ -38,6 +38,8 @@ Codex implemented this explicit-return plumbing and updated its callers/tests.
 MoE configurations also forward `shared_hidden_dim` and `shared_expert_gate` to
 every block; each layer owns separate shared parameters. Defaults None/False
 leave shared experts disabled. Codex added this forwarding and integration tests.
+`score_func="softmax"` (default) or `"sigmoid"` is forwarded to every MoE router;
+sigmoid returns `z_loss=None` during training too. Other output fields are unchanged.
 
 ### Discussion questions
 

@@ -42,9 +42,10 @@ def assignment_entropy(counts: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
 
 @torch.no_grad()
 def router_entropy(probabilities: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """Per-token uncertainty in bits before top-k; [B, S, E] -> [B, S].
+    """Per-token entropy of normalized affinities; [B, S, E] -> [B, S].
 
-    Measures routing confidence, not aggregate expert-usage balance.
+    Use softmax scores or full-expert-normalized sigmoid scores, not raw sigmoid.
+    Measures relative token preferences, not aggregate expert-usage balance.
     """
     log_probabilities = torch.log2(probabilities.clamp_min(eps))
 

@@ -21,11 +21,13 @@ balance/task-loss tradeoffs have been discussed. Capacity policies, overflow
 metrics, and decoder/training configuration are implemented. The capacity run
 and overflow/headroom tradeoffs have been discussed. FP32 routing, z-loss,
 training integration, and coefficient interpretation are complete. Shared experts,
-optional gates, fine-grained compute reasoning, and a toy-run discussion complete
-MoE stages 1–8. Batch generation now has an independent RNG; model weights remain
-unmatched across architectures. Resume with stage 9: auxiliary-loss-free balancing;
+optional gates, fine-grained compute reasoning, and their toy runs are covered.
+Auxiliary-loss-free bias updates, softmax/sigmoid scoring, training
+wiring, and toy-run interpretation complete MoE stages 1–9. Batch generation
+has an independent RNG; model weights remain unmatched across architectures.
+Resume with stage 10: MoE FLOPs, memory, and expert-parallel systems;
 see `moe/README.md`.
-FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
+Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
 completed, tested roadmap stage.
@@ -331,8 +333,19 @@ written; the implementation file remains intentionally empty.
    integration, tests, and coefficient experiment interpretation
 8. Shared experts and fine-grained expert specialization — done; shared branch,
    optional gate, decoder/training wiring, compute reasoning, and toy-run interpretation
-9. Auxiliary-loss-free balancing and training-step updates — active
-10. MoE FLOPs, memory, and expert-parallel systems
+9. Auxiliary-loss-free balancing and training-step updates — done
+   - Bias update/scoring implementations, training wiring, tests, and
+     softmax/sigmoid toy-run interpretation complete
+   - Softmax versus sigmoid affinities: top-k ordering, selected-weight
+     normalization, and interactions with expert selection corrections
+   - Non-gradient balancing biases and once-per-optimizer-step load updates
+   - Normalized-affinity diagnostics and softmax-only z-loss policy;
+     softmax baseline retained
+10. MoE FLOPs, memory, and expert-parallel systems — active
+    - Derive linear/SwiGLU/router and routed/shared expert compute and parameters
+    - Separate parameter, gradient, optimizer, activation, and dispatch memory
+    - Expert-parallel dispatch/combine, communication, and straggler costs;
+      distinguish FLOP estimates from measured runtime
 11. LatentMoE, normalization, and SiTU-GLU
 12. Quantile balancing: exact implementation to histogram estimation
 13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
@@ -411,7 +424,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [active: auxiliary-loss-free balancing and training-step updates]
+-> MoE [active: FLOPs, memory, and expert-parallel systems]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

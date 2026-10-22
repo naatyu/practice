@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 from torch import nn
 
@@ -7,9 +9,17 @@ from .router import TopKRouter
 
 
 class ExpertBatchedMoe(nn.Module):
-    def __init__(self, d_model: int, hidden_dim: int, num_experts: int, top_k: int):
+    def __init__(
+        self,
+        d_model: int,
+        hidden_dim: int,
+        num_experts: int,
+        top_k: int,
+        *,
+        score_func: Literal["softmax", "sigmoid"] = "softmax",
+    ):
         super().__init__()
-        self.router = TopKRouter(d_model, num_experts, top_k)
+        self.router = TopKRouter(d_model, num_experts, top_k, score_func=score_func)
         self.experts = nn.ModuleList(
             [SwiGLU(d_model, hidden_dim) for _ in range(num_experts)]
         )

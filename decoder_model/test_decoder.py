@@ -10,7 +10,10 @@ from transformer_block import TransformerBlock
 
 
 @pytest.mark.parametrize("gated", [False, True])
-def test_decoder_shared_experts_are_per_layer_and_receive_task_gradients(gated):
+@pytest.mark.parametrize("score_func", ["softmax", "sigmoid"])
+def test_decoder_shared_experts_are_per_layer_and_receive_task_gradients(
+    gated, score_func
+):
     model = DecoderModel(
         vocab_size=16,
         d_model=16,
@@ -22,10 +25,12 @@ def test_decoder_shared_experts_are_per_layer_and_receive_task_gradients(gated):
         top_k=2,
         shared_hidden_dim=24,
         shared_expert_gate=gated,
+        score_func=score_func,
     )
     shared_experts = []
     for block in model.blocks:
         assert isinstance(block.ffn, GroupedMoE)
+        assert block.ffn.router.score_func == score_func
         assert isinstance(block.ffn.shared_expert, SwiGLU)
         assert block.ffn.shared_expert.down_proj.in_features == 24
         assert (block.ffn.shared_expert_gate is not None) == gated
@@ -33,6 +38,7 @@ def test_decoder_shared_experts_are_per_layer_and_receive_task_gradients(gated):
     assert shared_experts[0] is not shared_experts[1]
     tokens = torch.tensor([[0, 1, 2, 3]])
     output = model(tokens)
+    assert (output.z_loss is None) == (score_func == "sigmoid")
     output.logits.square().mean().backward()
     for block in model.blocks:
         assert isinstance(block.ffn, GroupedMoE)

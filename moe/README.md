@@ -15,17 +15,17 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 5. Auxiliary load-balancing loss
 6. Expert capacity, overflow, and dropless routing
 7. Router numerical stability and z-loss
-8. Shared experts and fine-grained expert specialization — stages 1–8 complete
-9. Auxiliary-loss-free balancing and training-step updates — active
-10. MoE FLOPs, memory, and expert-parallel systems
+8. Shared experts and fine-grained expert specialization
+9. Auxiliary-loss-free balancing and training-step updates — stages 1–9 complete
+10. MoE FLOPs, memory, and expert-parallel systems — active
 11. LatentMoE, normalization, and SiTU-GLU
 12. Quantile balancing: exact implementation to histogram estimation
 13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 ## Current checkpoint
 
-Stages 1–8 are complete. Resume with stage 9: auxiliary-loss-free balancing and
-training-step updates. Completed reasoning and experiments are in `SOLUTIONS.md`.
+Stages 1–9 are complete. Resume with stage 10: MoE FLOPs, memory, and
+expert-parallel systems. Completed reasoning and experiments are in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -126,13 +126,13 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All six test files are assistant-authored. There are 147 passing MoE tests.
+All six test files are assistant-authored. There are 162 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
-## Resume here (2026-10-21)
+## Resume here (2026-10-22)
 
-Stages 1–8 are done. Do not repeat integration, diagnostics, capacity, FP32 router
+Stages 1–9 are done. Do not repeat integration, diagnostics, capacity, FP32 router
 computation, or z-loss wiring. The learner wrote the losses/router changes;
 Codex wrote tests and requested model/training/plot plumbing.
 
@@ -161,14 +161,51 @@ Batch generation now uses a separate seed-42 generator, independent of model
 initialization. This changes the data relative to older plots; weights remain
 unmatched across architectures, as requested by the learner.
 
-Stage 9 has not been implemented. Opening question, still unanswered: if an
-expert is overloaded and we add a per-expert correction to selection scores,
-should its correction increase or decrease, and why? Then explore selection
-versus mixing weights, non-gradient state, and once-per-training-step updates.
-Keep the existing balancing loss available as a baseline. Do not implement or
-record answers before discussing them with the learner.
+Stage 9: the learner understands selection-only balancing corrections, unbiased
+mixing weights, buffer state, and once-per-optimizer-step updates. The persistent
+zero-initialized `expert_bias` and gather-based unbiased weights/mass are now
+implemented/tested. The explicit update method and once-per-step placement are
+also implemented by the learner. Codex completed CLI/history/plot wiring and
+validation. `--bias-update-rate 0.001` enables updates; default 0 disables them.
+A positive rate requires auxiliary coefficient zero in this runner; z-loss is
+independent. Requested counts drive the update before metric reset. Tests verify
+timing, no-ops, invalid rates, exclusivity, persistence, and filenames.
+The softmax bias-0.001 run was reviewed: near-uniform assignments and low MaxVio
+coexist with increasingly selective token affinities and near-zero task loss.
+The learner also implemented sigmoid scoring and the normalized diagnostic view.
+Codex forwarded `score_func` through all MoE variants, block, decoder, ModelConfig,
+and CLI, with mode-specific plot labels/tags and a sigmoid/nonzero-z-loss guard.
+Both scoring paths are tested, and their bias-0.001 runs with gated shared width
+24 have been compared. Sigmoid has softer normalized per-token affinities:
+higher entropy and lower selected normalized mass, while both runs balance
+assignments and memorize the batch. This does not mean fewer experts execute or
+prove weaker specialization. Detailed interpretation is in `SOLUTIONS.md`.
+Do not repeat the implemented scoring, normalizations, wiring, or experiments.
+At the learner's request, stage 9 explicitly includes softmax versus sigmoid
+routing: independent affinities, top-k ordering, selected-score normalization,
+and interaction with selection corrections. Configurable scoring is implemented,
+with softmax retained as the default. Sigmoid affinities are normalized across
+all experts for entropy, mean-affinity logging, selected-mass logging, and the
+balancing loss. Selection/mixing use original affinities. Sigmoid returns z-loss
+None and the runner rejects a nonzero z-loss coefficient; plots omit its curve.
+Existing metric keys remain unchanged, but sigmoid labels explicitly describe
+normalized affinities rather than original categorical probabilities.
+Sigmoid scoring alone is not a balancing method. Use the
+[DeepSeek-V3 reference gate](https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py)
+to connect the educational design to a model implementation.
+Keep the existing balancing loss available as a baseline.
 
-Last verification: 475 repository tests pass, including 147 MoE tests. Targeted
+Stage 10 has not started. Begin with linear/SwiGLU FLOP and parameter accounting,
+then routed/shared expert and router costs. Agree on multiply-add conventions
+and distinguish active compute from total parameters. Next cover training and
+dispatch memory, then expert-parallel dispatch/combine and communication costs.
+Derive estimates before adding helpers/tests; no distributed training framework
+or optimized kernel is required for this educational stage.
+Opening question, still unanswered: for T tokens, a bias-free linear layer maps
+D input features to F outputs; how many multiply-accumulates does it perform?
+Ask one question at a time and do not pre-fill solutions.
+
+Last verification: 506 repository tests pass, including 162 MoE tests. Targeted
 MoE/model/training Ruff and ty checks pass. GPU grouped-kernel performance
 remains unmeasured.
 Keep explanations short, ask one question at a time, and let the learner write

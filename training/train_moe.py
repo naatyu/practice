@@ -2,7 +2,7 @@
 
 import argparse
 from dataclasses import asdict, dataclass
-from math import log2
+from math import isfinite, log2
 from pathlib import Path
 from typing import Literal
 
@@ -34,6 +34,7 @@ class ModelConfig:
     drop_policy: Literal["position", "probs"] = "probs"
     shared_hidden_dim: int | None = None
     shared_expert_gate: bool = False
+    score_func: Literal["softmax", "sigmoid"] = "softmax"
 
 
 @dataclass
@@ -53,10 +54,21 @@ def train_moe(
     device: str = "cpu",
     aux_loss_coefficient: float = 0.0,
     z_loss_coefficient: float = 0.0,
+    bias_update_rate: float = 0.0,
 ) -> list[dict]:
     """Overfit one fixed batch; record metrics once per optimizer step."""
     if steps < 1:
         raise ValueError("steps must be positive")
+    if not isfinite(bias_update_rate) or bias_update_rate < 0:
+        raise ValueError("bias_update_rate must be finite and non-negative")
+    if bias_update_rate > 0 and aux_loss_coefficient != 0:
+        raise ValueError(
+            "Auxiliary balancing loss and expert bias updates cannot both be enabled"
+        )
+    if model_config.score_func == "sigmoid" and z_loss_coefficient != 0:
+        raise ValueError(
+            "z-loss is disabled for sigmoid routing; use z_loss_coefficient=0"
+        )
     torch.manual_seed(42)
     model = DecoderModel(**asdict(model_config)).to(device)
     moes = []
@@ -96,6 +108,12 @@ def train_moe(
             aux_loss_coefficient=aux_loss_coefficient,
             z_loss_coefficient=z_loss_coefficient,
         )
+
+        # Update once per optimizer step, before resetting assignment counts.
+        if bias_update_rate > 0.0:
+            for moe in moes:
+                moe.router.update_expert_bias(rate=bias_update_rate)
+
         layer_metrics = [
             {
                 name: value.detach().cpu().clone()
@@ -111,8 +129,10 @@ def train_moe(
                 if losses.aux_loss is not None
                 else 0.0,
                 "aux_loss_coefficient": aux_loss_coefficient,
-                "z_loss": losses.z_loss.item() if losses.z_loss is not None else 0.0,
+                "z_loss": losses.z_loss.item() if losses.z_loss is not None else None,
                 "z_loss_coefficient": z_loss_coefficient,
+                "bias_update_rate": bias_update_rate,
+                "score_func": model_config.score_func,
                 "capacity_factor": model_config.capacity_factor,
                 "drop_policy": model_config.drop_policy,
                 "shared_hidden_dim": model_config.shared_hidden_dim,
@@ -124,6 +144,9 @@ def train_moe(
             moe.reset_metrics()
 
         if step == 0 or (step + 1) % 10 == 0 or step == steps - 1:
+            z_label = (
+                f"{losses.z_loss.item():.4f}" if losses.z_loss is not None else "n/a"
+            )
             loads = [round(layer["maxvio"].item(), 2) for layer in layer_metrics]
             drops = [
                 round(layer["dropped_assignment_rate"].item(), 3)
@@ -131,7 +154,7 @@ def train_moe(
             ]
             print(
                 f"step {step + 1:3d} | task {losses.task_loss.item():.4f} "
-                f"| aux {history[-1]['aux_loss']:.4f} | z {history[-1]['z_loss']:.4f} "
+                f"| aux {history[-1]['aux_loss']:.4f} | z {z_label} "
                 f"| maxvio per layer {loads} "
                 f"| drop per layer {drops}"
             )
@@ -150,10 +173,19 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         if coefficient != 0
         else "no auxiliary loss"
     )
+    score_func = history[0].get("score_func", "softmax")
+    sigmoid_scoring = score_func == "sigmoid"
+    if sigmoid_scoring:
+        run_tag += "_sigmoid"
+    run_label += f", scoring = {score_func}"
     z_coefficient = history[0].get("z_loss_coefficient", 0.0)
     if z_coefficient != 0:
         run_tag += f"_z_{z_coefficient:g}"
     run_label += f", z-loss coefficient = {z_coefficient:g}"
+    bias_rate = history[0].get("bias_update_rate", 0.0)
+    if bias_rate > 0:
+        run_tag += f"_bias_{bias_rate:g}"
+        run_label += f", bias update rate = {bias_rate:g}"
     capacity = history[0]["capacity_factor"]
     policy = history[0]["drop_policy"]
     capacity_tag = (
@@ -188,9 +220,12 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
     panels[0].plot(
         steps, [record["aux_loss"] for record in history], label="Aux (unweighted)"
     )
-    panels[0].plot(
-        steps, [record.get("z_loss", 0.0) for record in history], label="Z (unweighted)"
-    )
+    if not sigmoid_scoring:
+        panels[0].plot(
+            steps,
+            [record.get("z_loss", 0.0) for record in history],
+            label="Z (unweighted)",
+        )
     panels[0].legend(fontsize="small")
     panels[0].set_title(
         "Training loss (fixed batch)\n"
@@ -216,13 +251,17 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         ),
         (
             "mean_router_entropy",
-            "Router entropy (bits): token uncertainty",
-            f"Lower = stronger per-token preferences; {log2(num_experts):g} bits = all experts equally likely.",
+            "Router entropy (bits): normalized sigmoid affinities"
+            if sigmoid_scoring
+            else "Router entropy (bits): token uncertainty",
+            f"Lower = stronger relative token preferences; {log2(num_experts):g} bits = equal normalized affinities.",
         ),
         (
             "mean_selected_probability_mass",
-            "Selected probability mass (before normalization)",
-            "Higher means top-k retains more probability mass; not a quality score.",
+            "Selected normalized affinity mass"
+            if sigmoid_scoring
+            else "Selected probability mass (before normalization)",
+            "Share of full normalized affinities retained by selection, before top-k renormalization; not a quality score.",
         ),
         (
             "dropped_assignment_rate",
@@ -267,8 +306,12 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
         ),
         (
             "mean_router_probability",
-            "Mean router probability (before top-k)",
-            "Average softmax score over tokens; preference, not actual workload.",
+            "Mean normalized sigmoid affinity (before top-k)"
+            if sigmoid_scoring
+            else "Mean router probability (before top-k)",
+            "Average full-expert-normalized sigmoid score; preference, not workload."
+            if sigmoid_scoring
+            else "Average softmax score over tokens; preference, not actual workload.",
         ),
         (
             "dropped_assignment_rate_per_expert",
@@ -327,14 +370,18 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--aux-loss-coefficient", type=float, default=0.0)
     parser.add_argument("--z-loss-coefficient", type=float, default=0.0)
+    parser.add_argument("--bias-update-rate", type=float, default=0.0)
     parser.add_argument("--capacity-factor", type=float, default=None)
     parser.add_argument("--drop-policy", choices=["position", "probs"], default="probs")
     parser.add_argument("--shared-hidden-dim", type=int, default=None)
     parser.add_argument("--shared-expert-gate", action="store_true")
     parser.add_argument(
+        "--score-func", choices=["softmax", "sigmoid"], default="softmax"
+    )
+    parser.add_argument(
         "--output",
         default="training/plots/moe_metrics.png",
-        help="Base plot path; balancing, nonzero z-loss, and capacity settings are appended.",
+        help="Base plot path; active balancing, z-loss, capacity, and shared settings are appended.",
     )
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -344,11 +391,13 @@ if __name__ == "__main__":
             drop_policy=args.drop_policy,
             shared_hidden_dim=args.shared_hidden_dim,
             shared_expert_gate=args.shared_expert_gate,
+            score_func=args.score_func,
         ),
         OptimizerConfig(),
         steps=args.steps,
         device=args.device,
         aux_loss_coefficient=args.aux_loss_coefficient,
         z_loss_coefficient=args.z_loss_coefficient,
+        bias_update_rate=args.bias_update_rate,
     )
     plot_metrics(history, args.output)

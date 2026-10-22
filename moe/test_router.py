@@ -7,6 +7,129 @@ from moe.losses import load_balancing_loss
 from moe.router import TopKRouter
 
 
+@pytest.mark.parametrize("batch,sequence", [(1, 1), (2, 3)])
+def test_sigmoid_bias_weights_and_normalized_diagnostics(batch, sequence):
+    router = TopKRouter(4, 4, 2, score_func="sigmoid")
+    with torch.no_grad():
+        router.router.weight.copy_(torch.eye(4))
+        router.expert_bias.copy_(torch.tensor([-0.7, 0.0, 0.5, 0.0]))
+    affinities = torch.tensor([0.8, 0.7, 0.4, 0.1])
+    x = torch.logit(affinities).expand(batch, sequence, 4).clone().requires_grad_()
+    ids, weights, aux, z = router(x)
+    # Raw affinities + bias select experts 2 and 1, not the ordinary top two.
+    torch.testing.assert_close(ids, torch.tensor([2, 1]).expand(batch, sequence, 2))
+    torch.testing.assert_close(
+        weights, torch.tensor([4 / 11, 7 / 11]).expand(batch, sequence, 2)
+    )
+    assert aux is not None and aux.requires_grad and z is None
+    distribution = affinities / affinities.sum()
+    torch.testing.assert_close(aux, torch.tensor(1.1))
+    metrics = router.compute_metrics()
+    torch.testing.assert_close(metrics["mean_router_probability"], distribution)
+    torch.testing.assert_close(
+        metrics["mean_router_entropy"], -(distribution * distribution.log2()).sum()
+    )
+    # Normalize across ALL experts first: selected mass is .2 + .35, not 1.
+    torch.testing.assert_close(
+        metrics["mean_selected_probability_mass"], torch.tensor(0.55)
+    )
+    (weights * torch.tensor([1.0, -2.0])).sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert x.grad.abs().sum() > 0
+    router.eval()
+    assert router(x)[2:] == (None, None)
+
+
+def test_invalid_router_score_function_is_rejected():
+    with pytest.raises(ValueError, match="score_func"):
+        TopKRouter(4, 4, 2, score_func="invalid")  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("training", [True, False])
+def test_bias_changes_selection_but_weights_use_original_affinities(training):
+    router = TopKRouter(3, 3, 2).train(training)
+    with torch.no_grad():
+        router.router.weight.copy_(torch.eye(3))
+        router.expert_bias.copy_(torch.tensor([0.0, -0.5, 0.6]))
+    probabilities = torch.tensor(
+        [[[0.6, 0.3, 0.1], [0.2, 0.5, 0.3]], [[0.1, 0.8, 0.1], [0.3, 0.6, 0.1]]]
+    )
+    x = probabilities.log().requires_grad_()
+    ids, weights, aux, z = router(x)
+    expected_ids = torch.tensor([[[2, 0], [2, 0]], [[2, 1], [2, 0]]])
+    expected_weights = torch.tensor(
+        [[[1 / 7, 6 / 7], [0.6, 0.4]], [[1 / 9, 8 / 9], [0.25, 0.75]]]
+    )
+    torch.testing.assert_close(ids, expected_ids)
+    torch.testing.assert_close(weights, expected_weights)
+    if training:
+        counts = torch.tensor([3, 1, 4])
+        torch.testing.assert_close(router.tokens_per_expert, counts)
+        torch.testing.assert_close(aux, load_balancing_loss(probabilities, counts))
+        torch.testing.assert_close(router.selected_prob_mass_sum, torch.tensor(2.5))
+        torch.testing.assert_close(router.router_prob_sum, probabilities.sum((0, 1)))
+        assert z is not None
+    else:
+        assert aux is None and z is None
+        assert router.num_tokens == 0
+    (weights * torch.tensor([1.0, -2.0])).sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert x.grad.abs().sum() > 0
+    assert not router.expert_bias.requires_grad and router.expert_bias.grad is None
+    torch.testing.assert_close(router.expert_bias, torch.tensor([0.0, -0.5, 0.6]))
+
+
+def test_expert_bias_is_persistent_and_survives_metric_reset():
+    router = TopKRouter(3, 3, 2)
+    assert dict(router.named_buffers())["expert_bias"] is router.expert_bias
+    assert "expert_bias" not in dict(router.named_parameters())
+    assert router.expert_bias.shape == (3,)
+    assert router.expert_bias.dtype == torch.float32
+    router.expert_bias.copy_(torch.tensor([0.1, -0.2, 0.3]))
+    router(torch.randn(2, 4, 3))
+    bias = router.expert_bias.clone()
+    router.reset_metrics()
+    torch.testing.assert_close(router.expert_bias, bias)
+    assert router.num_tokens == 0 and router.tokens_per_expert.sum() == 0
+    restored = TopKRouter(3, 3, 2)
+    restored.load_state_dict(router.state_dict())
+    torch.testing.assert_close(restored.expert_bias, bias)
+    x = torch.randn(2, 4, 3)
+    torch.testing.assert_close(restored.eval()(x), router.eval()(x))
+
+
+def test_zero_bias_preserves_unbiased_topk_routing():
+    router = TopKRouter(4, 5, 2)
+    assert torch.count_nonzero(router.expert_bias) == 0
+    x = torch.randn(2, 3, 4)
+    scores, expected_ids = router.router(x).softmax(-1).topk(2, dim=-1)
+    ids, weights, _, _ = router(x)
+    torch.testing.assert_close(ids, expected_ids)
+    torch.testing.assert_close(weights, scores / scores.sum(-1, keepdim=True))
+
+
+@pytest.mark.parametrize(
+    "counts,rate,change",
+    [
+        ([10, 30, 20, 20], 0.01, [0.01, -0.01, 0.0, 0.0]),
+        ([10, 30, 20, 20], 0.0, [0.0, 0.0, 0.0, 0.0]),
+        ([20, 20, 20, 20], 0.01, [0.0, 0.0, 0.0, 0.0]),
+        ([0, 0, 0, 0], 0.01, [0.0, 0.0, 0.0, 0.0]),
+    ],
+)
+def test_explicit_bias_update_direction_and_noop_cases(counts, rate, change):
+    router = TopKRouter(4, 4, 2)
+    router.tokens_per_expert.copy_(torch.tensor(counts))
+    router.expert_bias.copy_(torch.tensor([0.1, -0.2, 0.3, -0.4]))
+    before = router.expert_bias.clone()
+    bias_buffer = router.expert_bias
+    router.update_expert_bias(rate)
+    torch.testing.assert_close(router.expert_bias, before + torch.tensor(change))
+    assert router.expert_bias is bias_buffer
+    assert router.expert_bias.grad_fn is None and not router.expert_bias.requires_grad
+    torch.testing.assert_close(router.tokens_per_expert, torch.tensor(counts))
+
+
 def test_auxiliary_loss_uses_current_forward_not_accumulated_metrics():
     router = TopKRouter(4, 4, 2).float()
     with torch.no_grad():

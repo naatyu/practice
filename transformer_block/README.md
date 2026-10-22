@@ -33,6 +33,8 @@ plumbing for the later MoE exercise; the block's tensor computation is unchanged
 For MoE, optional `shared_hidden_dim` and `shared_expert_gate` are forwarded to
 `GroupedMoE`; defaults None/False keep the routed-only path. The shared branch
 is combined inside MoE, before the block's existing residual addition.
+`score_func` is also forwarded (default `"softmax"`); `"sigmoid"` disables the
+router's z-loss but keeps the same block return signature.
 
 ### Discussion questions
 

@@ -119,7 +119,8 @@ def test_legacy_positional_eps_is_preserved():
 
 
 @pytest.mark.parametrize("gated", [False, True])
-def test_block_passes_shared_expert_configuration(gated):
+@pytest.mark.parametrize("score_func", ["softmax", "sigmoid"])
+def test_block_passes_shared_expert_configuration(gated, score_func):
     block = TransformerBlock(
         16,
         2,
@@ -128,11 +129,14 @@ def test_block_passes_shared_expert_configuration(gated):
         top_k=2,
         shared_hidden_dim=24,
         shared_expert_gate=gated,
+        score_func=score_func,
     )
     assert isinstance(block.ffn, GroupedMoE)
+    assert block.ffn.router.score_func == score_func
     assert isinstance(block.ffn.shared_expert, SwiGLU)
     assert block.ffn.shared_expert.down_proj.in_features == 24
     assert (block.ffn.shared_expert_gate is not None) == gated
     output, cache, aux, z = block(torch.randn(2, 3, 16))
     assert output.shape == (2, 3, 16) and cache is None
-    assert aux is not None and z is not None
+    assert aux is not None
+    assert (z is None) == (score_func == "sigmoid")
