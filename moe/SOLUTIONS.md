@@ -1,5 +1,115 @@
 # Mixture of Experts: completed reasoning
 
+## MoE FLOPs, memory, and expert-parallel systems (stage 10, complete)
+
+Let T=B*S, D=model width, E=routed expert count, K=selected experts per token,
+F=routed SwiGLU hidden width, and F_shared=shared hidden width. Count one
+multiply-accumulate as one MAC or approximately two FLOPs. For a bias-free
+linear D->F, forward cost is TDF MACs or approximately 2TDF FLOPs. SwiGLU's
+D->2F and F->D projections therefore cost 6TDF FLOPs, excluding activations.
+
+For router, K routed experts per token, and one shared expert, forward matmul
+FLOPs are 2TDE + 6TKDF + 6TD*F_shared. Learned parameters instead count stored
+weights: DE + 3EDF + 3D*F_shared. There is no token-count or two-FLOP factor
+in parameter counting. These estimates exclude shared gating, elementwise work,
+sorting, dispatch, and communication. Doubling T doubles this MoE compute but
+does not change parameter count. All E experts must be stored, not only K;
+expert parallelism may partition that storage across devices.
+
+With FP32 parameters, gradients, and two FP32 AdamW moments, parameter-related
+training storage is 16P bytes once states/gradients are materialized, excluding
+activations, workspaces, temporary allocations, and allocator overhead. Lowering
+K reduces routed work/activations but not this architectural storage estimate;
+all experts can still receive assignments somewhere in a batch.
+
+Dropless gathering repeats each input vector for its K assignments:
+grouped_tokens is [TK,D], containing TKD elements or 2TKD BF16 bytes. The up
+projection is [TK,2F], or 4TKF BF16 bytes. Its value/gate chunks [TK,F] are
+views, so their element storage is not added again. Out-of-place SiLU(gate)
+and value*SiLU(gate) each allocate [TK,F], together another 4TKF BF16 bytes.
+Thus those three projection/intermediate allocations total 8TKF bytes if live
+together. This is a scoped tensor inventory, not exact peak training memory;
+lifetimes, autograd-saved storage, output/dispatch tensors, router/shared paths,
+and backward workspaces also matter. Do not count saved references/views as
+independent copies of already-counted storage.
+
+The learner derived the corrected costs and view/allocation distinction above.
+
+### Expert ownership, dispatch, and combination
+
+EP places different experts on different GPUs; one GPU may host several experts.
+Selected experts are parallel branches: each receives the original token vector
+[D], not the output of another selected expert. Token here means a hidden vector,
+not a vocabulary ID.
+
+The basic forward has two activation exchanges: all-to-all dispatch to expert
+owners, local expert computation, then reverse all-to-all back to token owners.
+Local routes need no network transfer. Each expert maps [N_e,D] to [N_e,D].
+Across the group, TK expert-output vectors become T final token vectors after
+weighted combination. Each token returns to its own source rank, not one global
+GPU-0 aggregator. Optimized implementations can fuse return and combination.
+
+Saved permutations/metadata match each returned row to its original token and
+selected-expert slot. Router weights come from the source token's router; they
+can be applied before return or after restoring rows. For example, C routed to
+two experts with weights [0.25,0.75] and outputs [2,4], [6,8] gives [5,7].
+The single-device analogue is weighted output followed by `index_add_` on token
+indices. Rows are matched by routing metadata, not their vector contents.
+
+All-to-all exchanges destination-specific chunks; it does not sum them.
+All-reduce sums corresponding tensor positions, not matching token identities.
+With tokens A/B/C owned by ranks 0/1/2 and selections A->{0,1}, B->{1,2},
+C->{0,2}, expert-local rows can be [A,C], [A,B], [B,C]. Adding these arrays
+row-wise mixes different tokens. A globally aligned [A,B,C] zero-filled layout
+would allow reduction, but uses a different layout/communication strategy;
+all-reduce also replicates the result. Returning sparse assignments directly
+preserves the original token ownership without that global dense layout.
+See [PyTorch's collective semantics](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
+and [DeepEP's dispatch/combine example](https://github.com/deepseek-ai/DeepEP#example-use-in-model-training-and-inference).
+
+### Communication volume and topology
+
+For this paragraph, T is the total token count across the EP group, not per rank.
+Let r be the fraction of assignments whose expert is remote. One remote BF16
+assignment sends an input [D] and returns an output [D]: 4D bytes. The simple
+global forward payload is therefore 4TKrD bytes, counting each transmitted
+payload once, not again at receipt. This excludes metadata, backward, transport
+overhead, compression, and aggregation of multiple same-destination routes.
+
+With experts evenly spread over R ranks and uniform selection independent of
+token ownership, expected local assignments are TK/R. Divide by TK to get the
+local fraction 1/R, so r=1-1/R, not 1-TK/R. At 800 assignments over eight ranks,
+100 are local and 700 remote: r=0.875. More ranks increase the global remote
+fraction under these assumptions, but do not imply more bytes per rank or a
+proportional runtime increase. Going from R=8 to 16 changes r from 87.5% to
+93.75%, not twice as much. Increasing K from 2 to 8 instead quadruples this
+payload while leaving the expected remote fraction unchanged.
+
+Equal byte counts need not have equal cost: within-node links are typically
+faster than inter-node links; the actual gap depends on the hardware. Keeping
+EP within a node is attractive, not an absolute rule. Cross-node EP spreads
+expert storage further. TP can split each expert's matrices but adds collectives;
+FSDP shards training state/parameters but gathers parameters for computation.
+These approaches can be combined, and each moves different data.
+
+### Why FLOPs do not predict runtime alone
+
+An overloaded expert can be a straggler; the practical bottleneck is often the
+slowest rank's aggregate expert work, since a rank can host several experts.
+Balancing and capacity therefore affect execution time as well as assignment
+statistics. Communication bandwidth/latency, topology, and overlap also matter.
+
+Doubling K doubles the estimated expert matmul work but need not double runtime:
+larger expert batches can improve GPU utilization, while communication and
+activation storage also grow. Our `GroupedExperts` reduces Python-loop and
+kernel-launch overhead by grouping expert matmuls; it does not reduce their
+mathematical FLOPs. No GPU speedup was established in this discussion.
+
+This completes stage 10's reasoning. Codex recorded the corrected explanations;
+no accounting helper or distributed implementation was added. Stage 11 will
+make dispatch/return concrete with a two-process PyTorch forward exercise;
+the plan and optional backward extension are in `README.md`.
+
 ## Auxiliary-loss-free balancing (stage 9, complete)
 
 The learner identified the balancing correction as explicit non-gradient state,
@@ -760,12 +870,15 @@ metric implementations or start balancing losses before this experiment.
 
 ### Latest checkpoint (2026-10-22)
 
-MoE stages 1–9 are complete, including bias-based balancing, both scoring paths,
-diagnostic/loss semantics, and the sigmoid-versus-softmax toy-run interpretation.
-Next is stage 10: MoE FLOPs, memory, and expert-parallel systems. No stage-10
-accounting implementation or learner derivation has been added yet. Start with
-linear multiply-accumulate counting, then SwiGLU/router/routed/shared costs,
-training/dispatch memory, and expert-parallel communication. See `README.md`.
+MoE stages 1–10 are complete, including bias-based balancing, both scoring paths,
+toy-run interpretation, FLOP/memory accounting, and EP communication/runtime
+reasoning. Stage 11 is next: educational EP in PyTorch, before LatentMoE
+(now stage 12), quantile balancing (13), and frontier-model case studies (14).
+Start with two CPU/Gloo processes, four experts, top-2, fixed ownership, and
+dropless forward dispatch/return matched against a single-device reference.
+Backward is an optional separate extension, not implicitly provided by forward
+communication. No accounting helper or distributed code exists yet.
+See `README.md`; do not restart completed accounting or EP theory questions.
 Do not repeat the completed stage-9 implementation, wiring, or experiments.
 Last verification: 506 repository tests, including 162 MoE tests, pass.
 

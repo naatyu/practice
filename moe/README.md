@@ -16,16 +16,18 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 6. Expert capacity, overflow, and dropless routing
 7. Router numerical stability and z-loss
 8. Shared experts and fine-grained expert specialization
-9. Auxiliary-loss-free balancing and training-step updates — stages 1–9 complete
-10. MoE FLOPs, memory, and expert-parallel systems — active
-11. LatentMoE, normalization, and SiTU-GLU
-12. Quantile balancing: exact implementation to histogram estimation
-13. Frontier-model case studies: miniature MoE blocks and training tradeoffs
+9. Auxiliary-loss-free balancing and training-step updates
+10. MoE FLOPs, memory, and expert-parallel systems — stages 1–10 complete
+11. Educational expert parallelism in PyTorch — next
+12. LatentMoE, normalization, and SiTU-GLU
+13. Quantile balancing: exact implementation to histogram estimation
+14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 ## Current checkpoint
 
-Stages 1–9 are complete. Resume with stage 10: MoE FLOPs, memory, and
-expert-parallel systems. Completed reasoning and experiments are in `SOLUTIONS.md`.
+Stages 1–10 are complete; stage 10 was a reasoning exercise, not distributed
+code. Resume with stage 11: educational expert parallelism in PyTorch.
+Completed reasoning and experiments are in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -115,7 +117,8 @@ Implement progressively, per layer, rather than copying an entire framework:
   probability mass before top-k renormalization, and global/per-expert drop rates.
   Training also logs task, total, and unweighted balancing loss separately.
 - Implemented: FP32 router computation and separately weighted/logged z-loss.
-- Later: balancing biases and per-device load/throughput as introduced. Validation is still needed
+- Implemented: selection-only balancing biases and explicit training-step updates.
+- Later: per-device load/throughput. Validation is still needed
   for quality claims beyond the fixed-batch memorization experiment.
 
 Counts are detached diagnostics, not a differentiable balancing objective.
@@ -132,7 +135,7 @@ four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
 ## Resume here (2026-10-22)
 
-Stages 1–9 are done. Do not repeat integration, diagnostics, capacity, FP32 router
+Stages 1–10 are done. Do not repeat integration, diagnostics, capacity, FP32 router
 computation, or z-loss wiring. The learner wrote the losses/router changes;
 Codex wrote tests and requested model/training/plot plumbing.
 
@@ -195,15 +198,43 @@ Sigmoid scoring alone is not a balancing method. Use the
 to connect the educational design to a model implementation.
 Keep the existing balancing loss available as a baseline.
 
-Stage 10 has not started. Begin with linear/SwiGLU FLOP and parameter accounting,
-then routed/shared expert and router costs. Agree on multiply-add conventions
-and distinguish active compute from total parameters. Next cover training and
-dispatch memory, then expert-parallel dispatch/combine and communication costs.
-Derive estimates before adding helpers/tests; no distributed training framework
-or optimized kernel is required for this educational stage.
-Opening question, still unanswered: for T tokens, a bias-free linear layer maps
-D input features to F outputs; how many multiply-accumulates does it perform?
-Ask one question at a time and do not pre-fill solutions.
+Stage 10 is complete: compute/parameter formulas, view-aware activation storage,
+dispatch/return ownership, weighted combination, all-to-all versus all-reduce,
+BF16 forward payload 4TKrD, remote fraction r=1-1/R under uniform placement and
+routing, topology, stragglers, and grouped-matmul overhead. T is group-wide in
+the communication formula. Notes in `SOLUTIONS.md` include the assumptions;
+these are not exact peak-memory or runtime predictions. No accounting helper
+or distributed implementation has been added.
+
+### Next: a small PyTorch EP exercise (stage 11)
+
+Keep this in the MoE folder and reuse the existing router/SwiGLU conventions.
+The goal is to make the two exchanges concrete, not build a distributed trainer.
+
+1. Launch two local processes with `torchrun`, initially on CPU/Gloo. Learn rank,
+   world size, process-group initialization, and cleanup with a tiny exchange.
+2. Use four experts, top-2, two experts per rank, and separate local input tokens.
+   Keep fixed expert ownership, dropless routing, and a forward-only scope.
+3. Sort assignments by destination rank. Exchange counts, then input vectors
+   and expert IDs using variable-split `all_to_all_single`; save the mapping
+   to original token positions and selected weights on the source rank.
+4. Compute local experts, restore received-row order, and return outputs with
+   reversed splits. Undo the source permutation, weight, and `index_add_`.
+5. Match a single-device reference with the same weights and inputs. Codex adds
+   tests for unequal loads, empty destinations, and local-only routes, with
+   process timeouts so mistakes do not hang indefinitely.
+
+CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
+when compatible hardware is available. Optional afterward: an autograd-aware
+exchange and gradient-equivalence tests, explicitly separating communication
+from gradient synchronization of any replicated router parameters. Do not
+assume the forward collective provides the required backward automatically.
+No capacity policies, decoder wiring, custom kernels, or overlap are needed
+for the initial exercise. Ask one question at a time; the learner writes the
+algorithm, Codex writes tests and requested launch plumbing.
+
+References: [PyTorch all-to-all](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
+and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
 
 Last verification: 506 repository tests pass, including 162 MoE tests. Targeted
 MoE/model/training Ruff and ty checks pass. GPU grouped-kernel performance
