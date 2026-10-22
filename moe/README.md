@@ -4,6 +4,20 @@ Build a routed MoE from a small readable reference through training and modern
 balancing strategies. The learner writes implementations; the assistant reviews
 them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
 
+## Folder layout
+
+- `naive_moe.py` and `expert_batched_moe.py`: the first two implementation steps.
+- `experts.py`: `PackedExperts` (looped matmuls) and `GroupedExperts` (grouped MM),
+  both using packed weights.
+- `grouped_moe.py`: `GroupedMoE` routing, dispatch, capacity, and combination.
+- `router.py`, `losses.py`, and `metrics.py`: routing and training diagnostics.
+- `expert_parallel.py`: the next exercise; currently two-process CPU setup only.
+- `tests/`: assistant-authored tests, separated by component.
+- `benchmark_moe.py`: comparison of the single-device implementations.
+
+Public imports such as `from moe import GroupedMoE` stay unchanged. To run just
+the MoE tests: `uv run pytest -q moe/tests`.
+
 ## Learning order
 
 1. MoE fundamentals: experts, sparsity, and active compute
@@ -129,7 +143,7 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-All six test files are assistant-authored. There are 162 passing MoE tests.
+The seven test files in `tests/` are assistant-authored. There are 162 passing MoE tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
@@ -225,7 +239,9 @@ The goal is to make the two exchanges concrete, not build a distributed trainer.
    process timeouts so mistakes do not hang indefinitely.
 
 CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
-when compatible hardware is available. Optional afterward: an autograd-aware
+when multiple GPUs are available. The local workstation has one CUDA GPU;
+its PyTorch build is configured for CUDA 12.9 (see the root README).
+Optional afterward: an autograd-aware
 exchange and gradient-equivalence tests, explicitly separating communication
 from gradient synchronization of any replicated router parameters. Do not
 assume the forward collective provides the required backward automatically.
@@ -306,4 +322,4 @@ Last verification: 444 repo tests pass, including 130 MoE tests.
 Targeted model/MoE/generation/training Ruff/ty checks pass. Run
 `uv run pytest moe transformer_block decoder_model training -q` when resuming.
 For debugging,
-use the reusable VS Code module launch with `moe.packed_experts`.
+use the reusable VS Code module launch with `moe.grouped_moe`.

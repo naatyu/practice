@@ -9,8 +9,8 @@ from torch.utils.benchmark import Timer
 
 from mlp import SwiGLU
 from moe.expert_batched_moe import ExpertBatchedMoe
+from moe.grouped_moe import GroupedMoE
 from moe.naive_moe import NaiveMoe
-from moe.packed_experts import GroupedMoE
 
 
 def make_models(d_model: int, hidden_dim: int, num_experts: int, top_k: int):

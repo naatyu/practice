@@ -136,17 +136,32 @@ uv run pytest -q bpe
 uv run pytest -q generation
 ```
 
+### CUDA on the local workstation
+
+On Linux x86-64, `uv` selects the official CUDA 12.9 PyTorch build. This keeps
+PyTorch 2.13 compatible with the workstation's NVIDIA 575.57.08 driver, without
+changing the system driver or toolkit. Other platforms retain the PyPI source.
+CUDA 13 builds need a newer driver; see [NVIDIA's compatibility table](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+
+```bash
+uv sync --locked --extra plots
+uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+There is one physical GPU. We can run CUDA exercises on it, but two CPU processes
+remain the initial EP exercise; a real multi-GPU comparison needs more hardware.
+
 ### Debugging
 
 Open the repo root in VS Code and select the `.venv` Python interpreter.
 In Run and Debug, choose **Python: Debug a module**, then press F5 and enter
-the dotted module name, e.g. `moe.packed_experts` (no `.py`). This runs with
+the dotted module name, e.g. `moe.grouped_moe` (no `.py`). This runs with
 the repo root on the import path, supporting both sibling and relative imports.
 Set breakpoints as usual; the module's `if __name__ == "__main__":` block runs.
 
 To debug tests instead, open a test file and choose **Python: Debug current
 test file**. These launch configurations require the Python Debugger extension.
-Terminal equivalent for running a module: `uv run python -m moe.packed_experts`.
+Terminal equivalent for running a module: `uv run python -m moe.grouped_moe`.
 
 The implementations often avoid PyTorch's high-level equivalent on purpose.
 The goal is to understand and reproduce the underlying operation; the built-in

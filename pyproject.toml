@@ -16,3 +16,14 @@ plots = ["matplotlib"]
 dev = [
     "pytest",
 ]
+
+# Keep the Linux workstation compatible with its CUDA 12.9 driver.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu129", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true

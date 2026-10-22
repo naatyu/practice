@@ -870,6 +870,16 @@ metric implementations or start balancing losses before this experiment.
 
 ### Latest checkpoint (2026-10-22)
 
+At the learner's request, Codex reorganized the folder without changing the
+algorithms: `experts.py` holds both packed-weight execution backends,
+`grouped_moe.py` holds dispatch/capacity/combination, and `tests/` holds the
+seven component test files. The former `packed_experts.py` is removed; public
+`from moe import ...` imports remain unchanged. The tiny debug example now
+explicitly uses the loop backend to avoid grouped-MM alignment restrictions;
+the model default is unchanged. The EP exercise has only launch
+plumbing so far: two real CPU/Gloo ranks initialize and exit successfully.
+The first all-to-all warm-up is still for the learner to implement.
+
 MoE stages 1–10 are complete, including bias-based balancing, both scoring paths,
 toy-run interpretation, FLOP/memory accounting, and EP communication/runtime
 reasoning. Stage 11 is next: educational EP in PyTorch, before LatentMoE
@@ -905,7 +915,7 @@ Earlier checkpoint notes below are historical.
 
 The learner's router, naive MoE, expert-batched MoE, and grouped experts are
 implemented. PackedExperts and GroupedExperts remain side by side in
-`packed_experts.py`; the assistant added the selectable backend and benchmark.
+`experts.py`, with dispatch in `grouped_moe.py`; the assistant added the selectable backend and benchmark.
 There are 42 passing assistant-authored MoE tests. The learner has also
 completed decoder integration: optional expert-count and top-k arguments
 select the FFN in `TransformerBlock` and are forwarded by `DecoderModel`.
