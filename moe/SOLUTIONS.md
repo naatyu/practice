@@ -1,5 +1,116 @@
 # Mixture of Experts: completed reasoning
 
+## LatentMoE: routed width versus expert intermediate width (stage 12, active)
+
+The learner implemented optional `d_latent` in `GroupedMoE`; Codex reviewed and
+added tests, not the algorithm. Down/up projections surround only the routed
+path. The router and optional shared expert/gate stay at `d_model`.
+
+Interview questions and corrected answers:
+
+- How does dispatch/return payload change from width 4096 to 1024 at fixed
+  tokens, top-k, and dtype? It becomes one quarter, excluding routing metadata.
+- Where does down-projection happen? On the source rank before dispatch;
+  projecting after receipt would not reduce sent activation bytes.
+- Where does up-projection happen? On the source after return and weighted
+  combination, keeping both exchanges narrow and projecting once per token.
+- Why can projection follow combination? A shared linear map commutes with
+  weighted summation. A nonlinear map generally does not. The implementation
+  uses bias-free projections, so even a token with all assignments dropped
+  retains a zero routed contribution.
+- What enters an expert? `[N_e,d_latent]`, not `[N_e,d_model]`. Its fused value/gate
+  projection produces `[N_e,2*hidden_dim]`; SwiGLU produces `[N_e,hidden_dim]`;
+  its final projection returns `[N_e,d_latent]`.
+- Does each expert grow? No: its bias-free SwiGLU parameters change from
+  `3*d_model*hidden_dim` to `3*d_latent*hidden_dim`. Shared down/up projections
+  add `2*d_model*d_latent` parameters separately.
+- What if top-k grows fourfold while routed width shrinks fourfold? The leading
+  activation payload is unchanged, but more experts are active. This connects
+  to fine-grained routing, which instead narrows expert intermediate width.
+  It does not prove identical runtime: projections, metadata, grouping and
+  communication overhead still matter.
+- Why not wrap the whole MoE in the projections? That would also compress router
+  and shared-expert inputs. In the target design both retain original features.
+- Why not project grouped assignments? It can be correct before dispatch, but
+  repeats the same projection up to top-k times. Project original tokens once,
+  then gather their latent representations.
+
+Source: [NVIDIA LatentMoE](https://research.nvidia.com/labs/nemotron/LatentMoE/).
+Our implementation is a single-device educational extension, not a complete
+reproduction or distributed performance result. Existing packed/grouped experts,
+capacity rules, diagnostics and loss returns are reused. Codex's 18 new tests
+check independent forward/gradient equivalence and architectural boundaries.
+The original plain latent path above was subsequently extended with normalization
+as recorded below. SiTU-GLU backend support and optional GroupedMoE forwarding
+are also implemented/tested. Next: quantile balancing. Model/runner forwarding and latent EP
+integration are not implemented. Ask one question at a time; learner writes code.
+
+### SiTU-GLU backend activation (implemented and tested)
+
+The learner derived the following reasoning during the interview:
+
+- SiLU approaches the identity for large positive gates and zero for large
+  negative gates. The unbounded value branch can multiply a large positive gate
+  response, creating large intermediate activations before the final latent norm.
+- `softcap(x,beta)=beta*tanh(x/beta)` is bounded in magnitude by positive beta.
+- Cap the linear gate factor and the value factor independently, but apply
+  sigmoid to the original gate. Hidden activation magnitude is bounded by
+  `beta_gate*beta_value`; the following expert projection is not bounded by this.
+- Near zero, tanh is approximately identity, making both softcaps approximately
+  identity and recovering SwiGLU behavior for small inputs.
+- An optional `(beta_gate,beta_value)` tuple avoids duplicating expert classes.
+  None must select the uncapped SwiGLU path, not substitute unit caps.
+
+The learner wrote the initial packed implementation. At their request Codex
+cleaned it up and applied it to grouped experts using `_expert_activation` and
+`_validate_softcap_betas`. This corrected two remaining bugs: division rather
+than multiplication inside the gate tanh, and rejection if EITHER cap is
+nonpositive OR nonfinite. Store the optional tuple once instead of two optional
+attributes. The uncapped branch uses the existing functional SiLU primitive.
+Both expert backends retain their original parameter layout.
+
+Codex added 26 tests for both-position invalid betas, scalar formula and bounds
+with unequal caps, double-precision numerical gradient checks, and packed versus
+grouped outputs/input/parameter gradients with empty expert groups. At the
+learner's request, Codex subsequently wired the tuple through GroupedMoE only to
+routed experts, with 20 additional integration cases. These cover capped reference
+outputs/all gradients across capacity policies and router score modes, shared
+branch isolation with/without latent width, both backends and validation forwarding.
+Default experts and the shared branch remain SwiGLU. Docstrings describe
+`softcap_betas=(beta_gate,beta_value)` as finite positive non-learned cap magnitudes;
+None selects classic SwiGLU. End-to-end model/runner configuration and distributed
+latent integration remain outside scope. Next learning topic: quantile balancing.
+
+### Normalized LatentMoE (implemented and tested)
+
+- Does down-projection guarantee controlled activation magnitude? No: its learned
+  weights can change scale, and experts and their mixture can change it again.
+- Why normalize after aggregation, rather than immediately after down-projection?
+  The two placements control different tensors. Post-combination RMSNorm controls
+  the actual latent representation entering the shared up-projection, after
+  expert transformations and weighted summation.
+- Why before up-projection rather than after? It gives that projection a controlled
+  input magnitude. Normalizing afterward cannot repair an overflow that already
+  occurred inside the projection. The two placements are not equivalent; the
+  projection can still learn output scaling, so this is not a bound on all future
+  activations or a guarantee against instability.
+- Which axis/weight shape? Normalize each `[T,d_latent]` row over `d_latent` with
+  a learned per-feature weight `[d_latent]`. RMS normalization is not centering
+  or a guarantee of unit variance, and learned weights can change RMS afterward.
+- Is another argument needed? The learner explicitly preferred no flag: supplying
+  `d_latent` always enables the norm. This chooses the normalized variant for this
+  repo; original LatentMoE has no such additional norm. `d_latent=None` remains
+  unchanged. The learner wrote the implementation; Codex updated tests/docs.
+
+Reference: [Kimi K3, normalized LatentMoE, §2.3.1](https://arxiv.org/html/2607.24653v2#S2.SS3.SSS1).
+The routed path is now down -> experts -> weighted combination -> RMSNorm -> up,
+with the full-width shared contribution added afterward. The latent tests use
+native `torch.nn.functional.rms_norm` after an independent per-assignment sum,
+nonuniform norm weights, all-parameter gradient comparisons, hooks checking the
+norm immediately precedes up-projection, and zero-contribution backward checks.
+Do not reuse the old plain-LatentMoE reference that moves up inside the sum: the
+linear map still commutes with summation, but the inserted norm does not.
+
 ## Educational PyTorch EP (stage 11, forward and educational backward verified)
 
 `expert_parallel.py` now runs the learner's dropless forward with two real

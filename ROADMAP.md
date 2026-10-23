@@ -31,7 +31,14 @@ CPU/Gloo forward is implemented and matches a single-device reference with
 identical expert weights. At the learner's request, a separate AI-authored
 commented backward example now includes differentiable exchanges and router
 gradient synchronization, with persistent two-rank output/gradient regression
-tests covering zero-count and empty-rank cases. Resume with stage 12, LatentMoE.
+tests covering zero-count and empty-rank cases. Stage 12's learner-written
+LatentMoE routed path is implemented in `GroupedMoE` and covered by 38 tests;
+router/shared branch stay full-width. Post-combination latent RMSNorm is now
+implemented/tested and always enabled with `d_latent`, per learner preference.
+Optional routed-expert SiTU-GLU is implemented in both backends and wired through
+GroupedMoE, leaving the shared expert as SwiGLU. Resume with quantile balancing.
+Decoder/training forwarding and latent distributed integration remain outside
+the implemented scope.
 See `moe/README.md`.
 Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
@@ -364,7 +371,9 @@ written; the implementation file remains intentionally empty.
     - Done: persistent two-rank output/gradient reference checks, zero-count
       peers, local-only routes, empty source/receiver, bounded process timeouts
     - No custom kernels, overlap, multi-node setup, or FSDP/TP composition required
-12. LatentMoE, normalization, and SiTU-GLU
+12. LatentMoE, normalization, and SiTU-GLU — latent routed path implemented/tested;
+    post-combination RMSNorm and optional routed SiTU-GLU implemented/tested
+    (no decoder/training or distributed latent wiring yet)
 13. Quantile balancing: exact implementation to histogram estimation
 14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
@@ -445,7 +454,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [stages 1–10 done; EP forward verified, distributed regression coverage next]
+-> MoE [stages 1–12 educational scope done; quantile balancing next]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

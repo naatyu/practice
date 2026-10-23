@@ -32,17 +32,66 @@ the MoE tests: `uv run python -m pytest -q moe/tests`.
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems — stages 1–10 complete
-11. Educational expert parallelism in PyTorch — forward verified; regression coverage next
-12. LatentMoE, normalization, and SiTU-GLU
+11. Educational expert parallelism in PyTorch — forward/backward examples verified
+12. LatentMoE, normalization, and SiTU-GLU — educational routed path complete
 13. Quantile balancing: exact implementation to histogram estimation
 14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
 
 ## Current checkpoint
 
 Stages 1–10 are complete; stage 10 was a reasoning exercise, not distributed
-code. Stage 11's two-process EP forward is implemented and verified against a
-single-device reference. Next: persistent distributed regression tests.
+code. Stage 11's two-process EP forward and separate AI-authored backward
+example are verified, including persistent output/gradient reference tests.
+Stage 12's learner-written latent routed path in `GroupedMoE` is now tested.
+Post-combination latent RMSNorm and optional routed-expert SiTU-GLU are now
+implemented/tested, including GroupedMoE wiring. Next: stage 13, quantile balancing.
 Completed reasoning and experiments are in `SOLUTIONS.md`.
+
+### Stage 12: latent routed path checkpoint
+
+The learner added optional `d_latent=None` to `GroupedMoE`. Routing and the
+optional shared expert/gate read original `[B,S,d_model]` inputs. Bias-free
+down-projection processes each source token once, before repeated assignment
+gathers. Experts and weighted accumulation use `d_latent`; bias-free shared
+up-projection processes the combined token outputs once before adding the
+original-width shared branch. Expert intermediate `hidden_dim` is unchanged.
+Nonpositive latent widths are rejected; `None` preserves the old parameter
+layout and default behavior. Smaller latent width is the intended compression
+setting; the implementation does not reject equal/larger widths.
+
+The learner subsequently added `RMSNorm(d_latent)` after weighted accumulation,
+immediately before `latent_up`. By explicit learner choice, it is always enabled
+when `d_latent` is set, without another flag. This is the normalized variant,
+not a requirement of original LatentMoE. The ordinary MoE branch is unchanged.
+
+Codex added `tests/test_latent_moe.py`: 38 cases for both backends, both router
+score functions, dropless and both capacity policies, noncontiguous inputs,
+output/all-parameter/input gradients, branch boundaries, projection call counts,
+default compatibility, invalid widths, and entirely dropped token assignments.
+The reference uses per-assignment ordinary matmuls, then native PyTorch RMSNorm
+on each combined latent vector before up-projection. Tests use nonuniform learned
+norm weights, verify norm-input/up-input linkage, norm parameter gradients and
+finite backward through entirely dropped token assignments. The previous plain
+LatentMoE reference moved up-projection inside the sum; normalization now prevents
+moving the complete norm-plus-up transformation inside that sum.
+
+No decoder/training configuration forwarding or distributed latent dispatch is
+implemented yet. Do not repeat the completed projection/dispatch wiring.
+The learner implemented SiTU-GLU in PackedExperts; at their request Codex fixed
+the remaining gate-cap/validation errors and extracted shared activation and
+validation helpers used by both expert backends. `softcap_betas=None` preserves
+SwiGLU; `(beta_gate,beta_value)` enables SiTU-GLU with finite positive caps.
+The helper is ordinary PyTorch tensor math, so autograd supplies derivatives.
+Tests cover scalar formula/bounds, numerical derivatives, invalid betas in either
+position, and backend output/gradient parity with empty expert groups.
+
+At the learner's request, Codex wired optional `softcap_betas` through GroupedMoE
+only to routed experts. Both backends support it with or without latent width;
+the full-width shared expert remains SwiGLU. Docstrings specify tuple order and
+finite-positive cap semantics. Integration tests cover independent reference
+outputs/all gradients with caps, validation forwarding and shared-branch isolation.
+Next: stage 13, quantile balancing. Do not repeat normalization, backend activation
+or GroupedMoE wiring. Decoder/training configuration and latent EP are not wired.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
 `[B, S, D]` to expert logits `[B, S, E]`, applies softmax across experts, selects
@@ -271,7 +320,7 @@ The launch uses an explicit loopback master address because standalone hostname
 rendezvous hung on this machine. Default port is 29500; use `--master-port` to
 choose another free port if needed.
 
-Next learning topic: stage 12, LatentMoE, normalization, and SiTU-GLU.
+Stage 12 is now active: see the latent routed path checkpoint near the top.
 
 CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
 when multiple GPUs are available. The local workstation has one CUDA GPU;
@@ -286,7 +335,9 @@ algorithm, Codex writes tests and requested launch plumbing.
 References: [PyTorch all-to-all](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
 
-Last verification: 517 repository tests pass. The new backward source and tests
+Last verification: 581 repository tests pass, including 38 latent-path/wiring tests
+and 26 new SiTU-GLU tests.
+The backward source and tests
 pass Ruff, formatting, and ty checks; the original EP files are unchanged.
 A real two-rank CPU forward and the ad-hoc distributed-reference comparison
 passed. The subsequent backward demo and persistent two-rank

@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from mlp import SwiGLU
+from normalization import RMSNorm
 
 from .experts import GroupedExperts, PackedExperts
 from .router import TopKRouter
@@ -17,6 +18,8 @@ class GroupedMoE(nn.Module):
 
     capacity_factor=None is dropless; otherwise capacity is ceil(factor * T*K/E).
     Dropped assignments are not computed; surviving weights are not renormalized.
+    softcap_betas=None keeps SwiGLU; (beta_gate, beta_value) enables SiTU-GLU
+    for routed experts only. Both caps must be finite and strictly positive.
     """
 
     dropped_assignments_per_expert: torch.Tensor
@@ -32,6 +35,8 @@ class GroupedMoE(nn.Module):
         drop_policy: Literal["position", "probs"] = "probs",
         shared_hidden_dim: int | None = None,
         shared_expert_gate: bool = False,
+        d_latent: int | None = None,
+        softcap_betas: tuple[float, float] | None = None,
         score_func: Literal["softmax", "sigmoid"] = "softmax",
         expert_backend: Literal["loop", "grouped_mm"] = "grouped_mm",
     ):
@@ -50,10 +55,19 @@ class GroupedMoE(nn.Module):
             raise ValueError(
                 "Can't set shared expert gating when no shared expert is set."
             )
+        if d_latent is not None and d_latent <= 0:
+            raise ValueError(
+                f"Expected d_latent to be strictly positive, got: {d_latent}"
+            )
 
         self.router = TopKRouter(d_model, num_experts, top_k, score_func=score_func)
         expert_cls = PackedExperts if expert_backend == "loop" else GroupedExperts
-        self.experts = expert_cls(d_model, hidden_dim, num_experts)
+        self.experts = expert_cls(
+            d_model if d_latent is None else d_latent,
+            hidden_dim,
+            num_experts,
+            softcap_betas=softcap_betas,
+        )
         self.shared_expert = (
             SwiGLU(d_model, shared_hidden_dim)
             if shared_hidden_dim is not None
@@ -62,6 +76,10 @@ class GroupedMoE(nn.Module):
         self.shared_expert_gate = (
             nn.Linear(d_model, 1, bias=False) if shared_expert_gate else None
         )
+        if d_latent is not None:
+            self.latent_down = nn.Linear(d_model, d_latent, bias=False)
+            self.latent_up = nn.Linear(d_latent, d_model, bias=False)
+            self.latent_norm = RMSNorm(d_latent)
 
         self.d_model = d_model
         self.hidden_dim = hidden_dim
@@ -69,6 +87,7 @@ class GroupedMoE(nn.Module):
         self.top_k = top_k
         self.capacity_factor = capacity_factor
         self.drop_policy = drop_policy
+        self.d_latent = d_latent
 
         self.register_buffer(
             "dropped_assignments_per_expert",
@@ -99,7 +118,8 @@ class GroupedMoE(nn.Module):
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
-        x: [B, S, D]
+        x/output: [B, S, d_model]. Routed width is d_latent when enabled,
+        otherwise d_model; the router/shared expert always use d_model.
         T = B * S
         K = top k experts
         E = total num of experts
@@ -113,6 +133,10 @@ class GroupedMoE(nn.Module):
 
         tokens = x.reshape(-1, self.d_model)  # [T, D]
         flat_expert_ids = expert_ids.flatten()  # [T * K]
+
+        # Latent down projection
+        if self.d_latent is not None:
+            tokens = self.latent_down(tokens)  # [T, D_latent]
 
         # Group by expert; capacity determines whether token or weight order wins.
         if self.capacity_factor is not None and self.drop_policy == "probs":
@@ -157,21 +181,28 @@ class GroupedMoE(nn.Module):
         # Offsets must describe the retained groups, not the original requests.
         offsets = retained_counts.cumsum(dim=0, dtype=torch.int32)  # [E]
         token_indices = permutation // self.top_k  # [N]
-        grouped_tokens = tokens[token_indices]  # [N, D]
+        grouped_tokens = tokens[token_indices]  # [N, D | D_latent]
 
         # Process only retained assignments.
-        grouped_output = self.experts(grouped_tokens, offsets)  # [N, D]
+        grouped_output = self.experts(grouped_tokens, offsets)  # [N, D | D_latent]
 
         # Preserve original mixing weights; dropping does not renormalize them.
         grouped_weights = expert_weights.flatten()[permutation]  # [N]
-        weighted_output = grouped_output * grouped_weights.unsqueeze(-1)  # [N, D]
+        weighted_output = grouped_output * grouped_weights.unsqueeze(
+            -1
+        )  # [N, D | D_latent]
 
         # Tokens with no retained assignments get zero MoE output, not removed rows.
-        output = torch.zeros_like(tokens)  # [T, D]
+        output = torch.zeros_like(tokens)  # [T, D | D_latent]
         # FP32 routing weights can promote low-precision expert outputs.
         output.index_add_(
             dim=0, index=token_indices, source=weighted_output.to(output.dtype)
-        )  # [T, D]
+        )  # [T, D | D_latent]
+
+        # Latent up projection
+        if self.d_latent is not None:
+            output = self.latent_norm(output)  # [T, D_latent]
+            output = self.latent_up(output)  # [T, D]
 
         output = output.reshape_as(x)  # [B, S, D]
         if self.shared_expert is not None:
