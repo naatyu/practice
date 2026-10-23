@@ -26,8 +26,10 @@ Auxiliary-loss-free bias updates, softmax/sigmoid scoring, training
 wiring, and toy-run interpretation complete MoE stages 1–9. Batch generation
 has an independent RNG; model weights remain unmatched across architectures.
 Stage 10's FLOP/memory accounting, expert-parallel communication, and runtime
-tradeoffs are complete as reasoning exercises. Resume with stage 11:
-educational expert parallelism in PyTorch; see `moe/README.md`.
+tradeoffs are complete as reasoning exercises. Stage 11's educational two-rank
+CPU/Gloo forward is implemented and matches a single-device reference with
+identical expert weights. Resume with persistent distributed regression tests;
+backward remains optional and unimplemented. See `moe/README.md`.
 Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -347,16 +349,15 @@ written; the implementation file remains intentionally empty.
     - Separate parameter, gradient, optimizer, activation, and dispatch memory
     - Expert-parallel dispatch/combine, communication, and straggler costs;
       distinguish FLOP estimates from measured runtime
-11. Educational expert parallelism in PyTorch — next
-    - Two local processes with `torchrun` and CPU/Gloo; CUDA/NCCL later if available
-    - Start with four experts, top-2 routing, and fixed expert ownership;
-      dropless forward only, no decoder/training integration initially
-    - Group assignments by destination rank, exchange counts, then dispatch
-      token vectors and expert IDs using variable-split `all_to_all_single`
-    - Run only local experts, reverse the exchange, undo the dispatch
-      permutation, and combine with original router weights/token indices
-    - Match the single-device reference, including unequal loads, empty
-      destinations, and local-only routes; the assistant writes tests
+11. Educational expert parallelism in PyTorch — forward verified; regression coverage next
+    - Done: two CPU/Gloo processes, four experts, top-2, fixed expert IDs and
+      mixing weights, contiguous expert ownership, dropless forward
+    - Done: destination sorting, count/token/ID exchanges, rank-local
+      `GroupedExperts`, both ordering restorations, return exchange, weighted sum
+    - Verified: two-rank weighted outputs match an identical-weight single-device
+      reference; ten persistent tests cover preparation and local computation
+    - Next: persist the distributed reference check and add zero-count peer,
+      local-only, and empty-rank cases with bounded subprocess timeouts
     - Optional follow-up: differentiable communication and gradient equivalence;
       a working forward collective alone does not establish autograd correctness
     - No custom kernels, overlap, multi-node setup, or FSDP/TP composition required
@@ -441,7 +442,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [stages 1–10 done; next: educational PyTorch expert parallelism]
+-> MoE [stages 1–10 done; EP forward verified, distributed regression coverage next]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

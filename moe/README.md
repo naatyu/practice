@@ -11,12 +11,12 @@ them, writes tests, and records corrected reasoning in `SOLUTIONS.md`.
   both using packed weights.
 - `grouped_moe.py`: `GroupedMoE` routing, dispatch, capacity, and combination.
 - `router.py`, `losses.py`, and `metrics.py`: routing and training diagnostics.
-- `expert_parallel.py`: the next exercise; currently two-process CPU setup only.
+- `expert_parallel.py`: two-process CPU/Gloo EP forward with grouped local experts.
 - `tests/`: assistant-authored tests, separated by component.
 - `benchmark_moe.py`: comparison of the single-device implementations.
 
 Public imports such as `from moe import GroupedMoE` stay unchanged. To run just
-the MoE tests: `uv run pytest -q moe/tests`.
+the MoE tests: `uv run python -m pytest -q moe/tests`.
 
 ## Learning order
 
@@ -32,7 +32,7 @@ the MoE tests: `uv run pytest -q moe/tests`.
 8. Shared experts and fine-grained expert specialization
 9. Auxiliary-loss-free balancing and training-step updates
 10. MoE FLOPs, memory, and expert-parallel systems — stages 1–10 complete
-11. Educational expert parallelism in PyTorch — next
+11. Educational expert parallelism in PyTorch — forward verified; regression coverage next
 12. LatentMoE, normalization, and SiTU-GLU
 13. Quantile balancing: exact implementation to histogram estimation
 14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
@@ -40,7 +40,8 @@ the MoE tests: `uv run pytest -q moe/tests`.
 ## Current checkpoint
 
 Stages 1–10 are complete; stage 10 was a reasoning exercise, not distributed
-code. Resume with stage 11: educational expert parallelism in PyTorch.
+code. Stage 11's two-process EP forward is implemented and verified against a
+single-device reference. Next: persistent distributed regression tests.
 Completed reasoning and experiments are in `SOLUTIONS.md`.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
@@ -143,11 +144,12 @@ Both versions reuse `mlp.SwiGLU`, whose projections now default to `bias=False`.
 The packed representation stores up/gate weights `[E, D, 2F]` and down weights
 `[E, F, D]` for direct right multiplication, with no expert bias tensors.
 
-The seven test files in `tests/` are assistant-authored. There are 162 passing MoE tests.
+The eight test files in `tests/` are assistant-authored. There are 172 passing MoE tests,
+including ten EP preparation/local-computation cases, not distributed integration tests.
 `benchmark_moe.py` compares inference and forward/backward runtime for all
 four versions. The CPU results and reproduction command are in `SOLUTIONS.md`.
 
-## Resume here (2026-10-22)
+## Resume here (2026-10-23)
 
 Stages 1–10 are done. Do not repeat integration, diagnostics, capacity, FP32 router
 computation, or z-loss wiring. The learner wrote the losses/router changes;
@@ -218,25 +220,38 @@ BF16 forward payload 4TKrD, remote fraction r=1-1/R under uniform placement and
 routing, topology, stragglers, and grouped-matmul overhead. T is group-wide in
 the communication formula. Notes in `SOLUTIONS.md` include the assumptions;
 these are not exact peak-memory or runtime predictions. No accounting helper
-or distributed implementation has been added.
+was required; the subsequent EP forward implementation is described below.
 
-### Next: a small PyTorch EP exercise (stage 11)
+### Stage 11: educational PyTorch EP forward
 
-Keep this in the MoE folder and reuse the existing router/SwiGLU conventions.
-The goal is to make the two exchanges concrete, not build a distributed trainer.
+The learner implemented preparation, variable-split dispatch, local expert
+grouping/computation, both scatter-based order restorations, return exchange,
+and weighted combination. Codex supplied requested skeletons/launch plumbing,
+fixed example mixing weights, comments, reviews, and tests. `all_to_all_warmup`
+keeps the initial one-dimensional exchange as a reference.
 
-1. Launch two local processes with `torchrun`, initially on CPU/Gloo. Learn rank,
-   world size, process-group initialization, and cleanup with a tiny exchange.
-2. Use four experts, top-2, two experts per rank, and separate local input tokens.
-   Keep fixed expert ownership, dropless routing, and a forward-only scope.
-3. Sort assignments by destination rank. Exchange counts, then input vectors
-   and expert IDs using variable-split `all_to_all_single`; save the mapping
-   to original token positions and selected weights on the source rank.
-4. Compute local experts, restore received-row order, and return outputs with
-   reversed splits. Undo the source permutation, weight, and `index_add_`.
-5. Match a single-device reference with the same weights and inputs. Codex adds
-   tests for unequal loads, empty destinations, and local-only routes, with
-   process timeouts so mistakes do not hang indefinitely.
+The demo uses two real CPU/Gloo processes, four experts, top-2, D=16, F=32,
+fixed expert IDs and unequal normalized weights. Each rank owns two
+`GroupedExperts` entries. The router is not invoked and no assignments drop.
+Global-to-local IDs, empty-count entries, the two permutations, and return
+splits are explained in `SOLUTIONS.md`.
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc-per-node=2 --module moe.expert_parallel
+uv run python -m pytest -q moe/tests/test_expert_parallel.py
+```
+
+Both ranks produce [2,16] combined outputs. An ad-hoc two-process check using
+seed 42+rank reproduced each owner's actual weights in a single-device
+per-token/per-slot reference; both weighted outputs matched. That check has
+not yet been saved as a regression test. The ten existing tests cover only
+preparation and local expert computation, including empty local experts.
+
+Next: Codex should persist the full distributed correctness check, then cover
+zero-count peers, local-only routes, and an empty receiving rank with bounded
+process timeouts. A small extraction of the demo's forward path may help reuse
+it in tests; preserve the learner's algorithm and keep launch/example code separate.
+Do not repeat completed dispatch, local computation, or weighted combination.
 
 CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
 when multiple GPUs are available. The local workstation has one CUDA GPU;
@@ -252,9 +267,10 @@ algorithm, Codex writes tests and requested launch plumbing.
 References: [PyTorch all-to-all](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
 
-Last verification: 506 repository tests pass, including 162 MoE tests. Targeted
-MoE/model/training Ruff and ty checks pass. GPU grouped-kernel performance
-remains unmeasured.
+Last verification: 516 repository tests pass, including 172 MoE tests. EP source
+and tests pass Ruff, formatting, and ty checks. A real two-rank CPU forward and
+the ad-hoc distributed-reference comparison passed. Multi-GPU EP performance
+and distributed gradients remain unverified.
 Keep explanations short, ask one question at a time, and let the learner write
 the algorithm. Codex writes tests and requested plumbing.
 

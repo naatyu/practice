@@ -90,8 +90,10 @@ Shared experts, optional gating, and fine-grained routing's compute tradeoffs
 are also covered. The MoE notes record the toy runs and their limits.
 Auxiliary-loss-free balancing and sigmoid routing are complete too, including
 their diagnostic semantics and toy-run comparison. Stage 10's FLOP/memory
-accounting and expert-parallel systems reasoning are complete. Next is a small
-PyTorch expert-parallel implementation, starting with two CPU processes.
+accounting and expert-parallel systems reasoning are complete. The educational
+two-process CPU expert-parallel forward now works with grouped experts and
+matches a single-device reference. Persistent end-to-end regression tests are
+the next checkpoint; distributed backward is a separate optional extension.
 
 FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
@@ -104,7 +106,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
-| Mixture of Experts | [`moe`](moe) | Stages 1–10 complete; educational PyTorch expert parallelism next |
+| Mixture of Experts | [`moe`](moe) | Stages 1–10 complete; EP forward verified, regression coverage next |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |

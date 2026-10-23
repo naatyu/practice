@@ -1,5 +1,102 @@
 # Mixture of Experts: completed reasoning
 
+## Educational PyTorch EP (stage 11, forward verified)
+
+`expert_parallel.py` now runs the learner's dropless forward with two real
+CPU/Gloo processes, four experts, top-2, and fixed routing. Each rank owns two
+`GroupedExperts` entries; D=16/F=32 avoid the tiny debug example's grouped-MM
+alignment issue. Codex supplied requested skeletons/launch boilerplate, fixed
+mixing weights, comments, tests, and verification, not the learner's algorithm.
+
+### Counts and dispatch
+
+`all_to_all_single` uses one input/output tensor per rank rather than lists of
+tensors. Input rows are already grouped into destination-rank chunks. Default
+splits are equal; unequal routing requires explicit splits. It does not inspect
+expert IDs to choose destinations or allocate the output buffer for us.
+
+Each rank holds send counts [world_size], one count per destination. Exchanging
+this tensor with equal splits produces that rank's receive counts [world_size],
+one entry per source, not a matrix of all ranks. Send counts [2,2] on rank 0
+and [3,1] on rank 1 yield receive counts [2,3] and [2,1]. A zero entry means an
+empty data chunk: ranks still execute all collectives in the same order.
+
+Counts are tensors for their exchange, then `.tolist()` produces Python split
+lists accepted by this API. `int(received_counts.sum())` gives the output row
+count; `int(tensor.item())` is another explicit scalar conversion. `.item()`'s
+broad static return type alone is not enough to guarantee an integer dimension
+to ty. Output buffers must have the matching input dtype/device; `new_empty`
+preserves those. GPU-to-host count conversion can synchronize, but CPU/Gloo is
+our current educational target, not an optimized dispatcher.
+
+Here T is the source rank's local token count, K is top-k, and E/world_size is
+experts per rank: K and experts per rank are not interchangeable. Flatten global
+expert IDs [T,K] to [TK], derive destination = global_id // experts_per_rank,
+and keep the destination argsort permutation. `bincount(destinations,
+minlength=world_size)` counts assignments, not distinct tokens. Gather token
+rows using permutation // K, not flattened feature values; send tokens are
+[TK,D] and aligned expert IDs are [TK]. Both exchanges use the same splits.
+Received tokens [N,D] and IDs [N] are in source-rank order, not expert order.
+
+### Local computation and the two order restorations
+
+On rank 1, global experts [2,3] occupy local weight indices [0,1]. Translate via
+local_id = global_id - rank*experts_per_rank. Sort local IDs and gather token
+rows with an expert permutation. Count local IDs (not permutation indices),
+then cumsum along dimension 0 as int32 for the grouped-MM offsets. Include
+zero-count experts with minlength so repeated offsets represent empty groups.
+
+Stability is helpful for reproducible inspection, not a correctness requirement
+for a row-independent expert MLP. [A,C,E] and [C,E,A] produce the same matching
+expert outputs in different row orders; retaining and undoing the actual
+permutation is the requirement. Sorting twice with the same permutation does
+not generally invert it: [1,2,0] applied twice rotates rather than restores.
+
+The learner chose a scatter to avoid another sort:
+
+```python
+received_order_output = torch.empty_like(grouped_output)
+received_order_output[expert_permutation] = grouped_output
+```
+
+Indexing on the right gathers rows; indexing on the left writes into the named
+positions. Grouped row i came from received row expert_permutation[i], so this
+puts its result back there. Uniqueness of permutation indices makes it a
+one-to-one restoration, not accumulation.
+
+For return all-to-all, input splits become recv_split and output splits become
+send_split. Allocate [TK,D] on the original source rank. After return, rows are
+still destination-grouped, so scatter with the original dispatch permutation
+to restore flattened token/slot order. These are two distinct permutations:
+expert_permutation undoes local expert grouping; permutation undoes dispatch
+grouping. Reshape the restored outputs to [T,K,D], multiply by original mixing
+weights [T,K,1], and sum K to produce [T,D]. This demo does not need index_add_.
+Weights remain on the source rank in original token/slot order; each fixed
+row sums to one. They are not sent with assignments in this implementation.
+
+### Verification and remaining scope
+
+Ten assistant-authored persistent tests cover preparation and local computation:
+controlled ordering, different K versus experts per rank, zero-count
+destinations, non-contiguous inputs, an empty local input batch in preparation,
+rank-1 global/local translation, and empty local expert groups. These tests do
+not launch distributed communication.
+
+Separately, an ad-hoc two-rank Gloo check seeded the actual experts with 42+rank,
+reconstructed both owners' weights in a single-device reference, and computed
+each selected expert per token with the same unequal mixing weights. Both
+ranks' combined [2,16] outputs matched (rtol=1e-4, atol=1e-3). This verifies
+the current complete forward example; it is not yet a saved regression test.
+
+Next: persist that end-to-end check and test local-only routes, zero-count
+peers, and an empty receiving rank with timeouts. Do not infer these distributed
+edge cases from the local tests. Router/model integration, capacity, and
+distributed backward are not implemented here. Autograd-aware exchange and
+replicated-parameter gradient synchronization are optional separate work;
+ordinary forward collectives do not establish a correct distributed backward.
+CPU correctness is not multi-GPU/NCCL performance validation. LocalTensor was
+considered but deliberately skipped in favor of real CPU processes.
+
 ## MoE FLOPs, memory, and expert-parallel systems (stage 10, complete)
 
 Let T=B*S, D=model width, E=routed expert count, K=selected experts per token,
@@ -106,9 +203,9 @@ kernel-launch overhead by grouping expert matmuls; it does not reduce their
 mathematical FLOPs. No GPU speedup was established in this discussion.
 
 This completes stage 10's reasoning. Codex recorded the corrected explanations;
-no accounting helper or distributed implementation was added. Stage 11 will
-make dispatch/return concrete with a two-process PyTorch forward exercise;
-the plan and optional backward extension are in `README.md`.
+no accounting helper or distributed implementation was needed for that reasoning
+stage. Stage 11's subsequent two-process forward is recorded above; the plan
+and optional backward extension are in `README.md`.
 
 ## Auxiliary-loss-free balancing (stage 9, complete)
 
@@ -868,29 +965,31 @@ metric implementations or start balancing losses before this experiment.
 
 ## Handoff
 
-### Latest checkpoint (2026-10-22)
+### Latest checkpoint (2026-10-23)
 
 At the learner's request, Codex reorganized the folder without changing the
 algorithms: `experts.py` holds both packed-weight execution backends,
 `grouped_moe.py` holds dispatch/capacity/combination, and `tests/` holds the
-seven component test files. The former `packed_experts.py` is removed; public
+component test files (now eight with EP). The former `packed_experts.py` is removed; public
 `from moe import ...` imports remain unchanged. The tiny debug example now
 explicitly uses the loop backend to avoid grouped-MM alignment restrictions;
-the model default is unchanged. The EP exercise has only launch
-plumbing so far: two real CPU/Gloo ranks initialize and exit successfully.
-The first all-to-all warm-up is still for the learner to implement.
+the model default is unchanged. The EP demo instead uses `GroupedExperts` with
+aligned D=16/F=32, as requested. Its dispatch, local computation, return,
+ordering restorations, and weighted sum are implemented by the learner.
 
 MoE stages 1–10 are complete, including bias-based balancing, both scoring paths,
 toy-run interpretation, FLOP/memory accounting, and EP communication/runtime
-reasoning. Stage 11 is next: educational EP in PyTorch, before LatentMoE
-(now stage 12), quantile balancing (13), and frontier-model case studies (14).
-Start with two CPU/Gloo processes, four experts, top-2, fixed ownership, and
-dropless forward dispatch/return matched against a single-device reference.
-Backward is an optional separate extension, not implicitly provided by forward
-communication. No accounting helper or distributed code exists yet.
-See `README.md`; do not restart completed accounting or EP theory questions.
+reasoning. Stage 11's two-rank CPU/Gloo weighted forward matches an identical-weight
+single-device reference in an ad-hoc run. Ten persistent EP tests currently cover
+only preparation and local computation. Next: save the distributed-reference
+test and add zero-count/local-only/empty-receiver communication cases with
+timeouts; keep implementation/refactor work small. Backward is an optional
+separate extension, not implicitly provided by forward communication.
+LatentMoE remains stage 12, quantile balancing 13, and model case studies 14.
+See `README.md`; do not restart completed dispatch/return or EP theory questions.
 Do not repeat the completed stage-9 implementation, wiring, or experiments.
-Last verification: 506 repository tests, including 162 MoE tests, pass.
+Last verification: 516 repository tests, including 172 MoE tests, pass. EP source
+and tests pass Ruff/format/ty; both ranks pass the ad-hoc forward-reference check.
 
 ### Historical checkpoint: tiny training run (2026-10-20)
 
