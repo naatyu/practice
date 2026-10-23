@@ -247,19 +247,38 @@ per-token/per-slot reference; both weighted outputs matched. That check has
 not yet been saved as a regression test. The ten existing tests cover only
 preparation and local expert computation, including empty local experts.
 
-Next: Codex should persist the full distributed correctness check, then cover
-zero-count peers, local-only routes, and an empty receiving rank with bounded
-process timeouts. A small extraction of the demo's forward path may help reuse
-it in tests; preserve the learner's algorithm and keep launch/example code separate.
-Do not repeat completed dispatch, local computation, or weighted combination.
+The forward-only description above records the original checkpoint. At the
+learner's request, Codex subsequently added `expert_parallel_backward.py` as a
+separate, commented teaching example; the learner's forward file is unchanged.
+Its custom autograd all-to-all reverses send/receive splits in backward. Both
+activation exchanges use it; counts and expert IDs remain ordinary metadata.
+The demo includes a learned replicated router, local expert/input gradients,
+and an explicit router-gradient SUM for the sum of rank-local losses.
+
+```bash
+uv run python -m torch.distributed.run --master-addr=127.0.0.1 --nproc-per-node=2 --module moe.expert_parallel_backward
+uv run python -m pytest -q moe/tests/test_expert_parallel_backward.py
+```
+
+The persistent two-process test compares outputs and input, mixing-weight,
+router, and expert gradients against independent single-device math using
+identical weights. It covers mixed routes, local-only routes/zero-count peers,
+an empty receiving rank, and an empty source rank, with bounded subprocess
+timeouts. All ranks must traverse both communication nodes in backward; the
+example requires grad-enabled tokens on every rank, including empty ones.
+Only first-order gradients are supported. No decoder integration is implied.
+The launch uses an explicit loopback master address because standalone hostname
+rendezvous hung on this machine. Default port is 29500; use `--master-port` to
+choose another free port if needed.
+
+Next learning topic: stage 12, LatentMoE, normalization, and SiTU-GLU.
 
 CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
 when multiple GPUs are available. The local workstation has one CUDA GPU;
 its PyTorch build is configured for CUDA 12.9 (see the root README).
-Optional afterward: an autograd-aware
-exchange and gradient-equivalence tests, explicitly separating communication
-from gradient synchronization of any replicated router parameters. Do not
-assume the forward collective provides the required backward automatically.
+The new example explicitly separates token-gradient communication from
+gradient synchronization of replicated router parameters. Ordinary forward
+collectives alone do not supply this backward path.
 No capacity policies, decoder wiring, custom kernels, or overlap are needed
 for the initial exercise. Ask one question at a time; the learner writes the
 algorithm, Codex writes tests and requested launch plumbing.
@@ -267,10 +286,12 @@ algorithm, Codex writes tests and requested launch plumbing.
 References: [PyTorch all-to-all](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
 
-Last verification: 516 repository tests pass, including 172 MoE tests. EP source
-and tests pass Ruff, formatting, and ty checks. A real two-rank CPU forward and
-the ad-hoc distributed-reference comparison passed. Multi-GPU EP performance
-and distributed gradients remain unverified.
+Last verification: 517 repository tests pass. The new backward source and tests
+pass Ruff, formatting, and ty checks; the original EP files are unchanged.
+A real two-rank CPU forward and the ad-hoc distributed-reference comparison
+passed. The subsequent backward demo and persistent two-rank
+gradient-equivalence test also pass on CPU.
+Multi-GPU EP performance remains unverified.
 Keep explanations short, ask one question at a time, and let the learner write
 the algorithm. Codex writes tests and requested plumbing.
 

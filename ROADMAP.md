@@ -28,8 +28,11 @@ has an independent RNG; model weights remain unmatched across architectures.
 Stage 10's FLOP/memory accounting, expert-parallel communication, and runtime
 tradeoffs are complete as reasoning exercises. Stage 11's educational two-rank
 CPU/Gloo forward is implemented and matches a single-device reference with
-identical expert weights. Resume with persistent distributed regression tests;
-backward remains optional and unimplemented. See `moe/README.md`.
+identical expert weights. At the learner's request, a separate AI-authored
+commented backward example now includes differentiable exchanges and router
+gradient synchronization, with persistent two-rank output/gradient regression
+tests covering zero-count and empty-rank cases. Resume with stage 12, LatentMoE.
+See `moe/README.md`.
 Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
@@ -349,17 +352,17 @@ written; the implementation file remains intentionally empty.
     - Separate parameter, gradient, optimizer, activation, and dispatch memory
     - Expert-parallel dispatch/combine, communication, and straggler costs;
       distinguish FLOP estimates from measured runtime
-11. Educational expert parallelism in PyTorch — forward verified; regression coverage next
+11. Educational expert parallelism in PyTorch — forward and teaching backward verified
     - Done: two CPU/Gloo processes, four experts, top-2, fixed expert IDs and
       mixing weights, contiguous expert ownership, dropless forward
     - Done: destination sorting, count/token/ID exchanges, rank-local
       `GroupedExperts`, both ordering restorations, return exchange, weighted sum
     - Verified: two-rank weighted outputs match an identical-weight single-device
       reference; ten persistent tests cover preparation and local computation
-    - Next: persist the distributed reference check and add zero-count peer,
-      local-only, and empty-rank cases with bounded subprocess timeouts
-    - Optional follow-up: differentiable communication and gradient equivalence;
-      a working forward collective alone does not establish autograd correctness
+    - Done: separate AI-authored commented autograd exchange/backward demo,
+      including replicated-router gradient synchronization
+    - Done: persistent two-rank output/gradient reference checks, zero-count
+      peers, local-only routes, empty source/receiver, bounded process timeouts
     - No custom kernels, overlap, multi-node setup, or FSDP/TP composition required
 12. LatentMoE, normalization, and SiTU-GLU
 13. Quantile balancing: exact implementation to histogram estimation

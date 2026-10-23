@@ -1,6 +1,6 @@
 # Mixture of Experts: completed reasoning
 
-## Educational PyTorch EP (stage 11, forward verified)
+## Educational PyTorch EP (stage 11, forward and educational backward verified)
 
 `expert_parallel.py` now runs the learner's dropless forward with two real
 CPU/Gloo processes, four experts, top-2, and fixed routing. Each rank owns two
@@ -88,14 +88,54 @@ each selected expert per token with the same unequal mixing weights. Both
 ranks' combined [2,16] outputs matched (rtol=1e-4, atol=1e-3). This verifies
 the current complete forward example; it is not yet a saved regression test.
 
-Next: persist that end-to-end check and test local-only routes, zero-count
-peers, and an empty receiving rank with timeouts. Do not infer these distributed
-edge cases from the local tests. Router/model integration, capacity, and
-distributed backward are not implemented here. Autograd-aware exchange and
-replicated-parameter gradient synchronization are optional separate work;
-ordinary forward collectives do not establish a correct distributed backward.
+The original forward-only checkpoint above is superseded by the separate
+AI-authored `expert_parallel_backward.py` example and its persistent distributed
+test. The learner requested a commented implementation to study, rather than
+an additional learner-written exercise. The forward-only source is unchanged.
 CPU correctness is not multi-GPU/NCCL performance validation. LocalTensor was
 considered but deliberately skipped in favor of real CPU processes.
+
+### Backward: communication versus parameter synchronization
+
+For `output = sum_k(weight_k * expert_output_k)`, upstream gradient `g` gives
+each expert output `weight_k * g`. Each scalar mixing weight receives the
+feature-wise dot product `sum(expert_output_k * g)`, computed on the source rank
+and propagated through selected-score normalization and router projections.
+Discrete top-k expert IDs do not receive gradients.
+
+Backward traverses the forward graph in reverse:
+
+1. The output-return exchange sends weighted output gradients to expert owners.
+2. Local expert autograd computes both input and parameter gradients. Expert
+   parameter gradients stay on the owner; there is no expert replication here.
+3. The input-dispatch exchange sends expert-input gradients back to token owners.
+   Autograd through the original repeated-row gather sums contributions from
+   all selected experts locally, then continues into the preceding model layers.
+
+`_AllToAll.backward` swaps forward input/output splits. This is an inverse
+permutation of rows, not an all-reduce. Only the two activation exchanges need
+autograd wrappers; counts and IDs are integer routing metadata.
+
+The replicated router is different: each source computes local parameter
+gradients, so the demo explicitly all-reduces their SUM after backward. This
+matches a global objective equal to the sum of rank-local losses. An average
+objective requires the corresponding scaling; unequal token counts require
+appropriate loss weighting. With an additional expert data-parallel group,
+replicated copies of an expert would also need synchronization over that group.
+
+The CPU/Gloo regression test checks forward outputs, token and mixing-weight
+gradients, both expert projection gradients, and reduced router gradients.
+Its independent reference evaluates each assignment with ordinary matrix
+multiplication in one global autograd graph. Cases include uneven mixed routes,
+local-only routes, zero-count peers, an empty receiving rank, and an empty
+source rank. Unused reference experts' absent gradients are compared as zeros.
+Workers have process-group and parent-enforced timeouts.
+
+Limitations: first-order autograd only; all ranks must enter backward and traverse
+both exchanges in the same order. Grad-enabled tokens on every rank maintain
+that graph in this educational example, including ranks with empty source
+batches. No frozen-input/mixed-participation training, distributed decoder,
+capacity policy, asynchronous overlap, or NCCL performance is claimed.
 
 ## MoE FLOPs, memory, and expert-parallel systems (stage 10, complete)
 
