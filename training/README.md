@@ -14,7 +14,7 @@ Omit num-bins for exact quantiles; supply it for histograms. Defaults keep QB of
 Use zero sign-update rate and auxiliary coefficient with QB in this runner.
 See `moe/README.md` for the current interview checkpoint. The router supports
 optional distributed histogram pooling, but this runner still calls local updates.
-Stage 13 is complete; next: frontier-model case studies. Compare load-balance
+MoE stages 1–14 are complete for educational scope. Compare load-balance
 metrics and task loss, not just one curve.
 
 ## Exercise 1: One training step

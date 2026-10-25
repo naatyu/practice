@@ -1,12 +1,94 @@
 # Mixture of Experts: completed reasoning
 
+## Final architecture synthesis (stage 14, completed)
+
+The final interview reviewed existing components rather than adding another
+assembly wrapper. All 14 MoE stages are complete for educational scope. This is
+a miniature frontier-style design exercise, not a faithful named-model replica
+or evidence of production training quality. Older checkpoints below record the
+learning sequence; their "next" steps are historical, not outstanding tasks.
+
+### One compute budget, different communication costs
+
+Let D=d_model, F=hidden_dim, K=top_k and E=num_experts (E is not model width).
+Ignoring biases and elementwise operations, a SwiGLU expert has 3*width*F weights;
+routed matmul FLOPs per token are approximately 6*K*width*F (multiply-add = 2).
+The exercises compare only this routed term, not whole-block FLOPs or latency.
+
+| Design | E | K | Expert input/output width | F | Routed FLOPs / baseline | Activation payload / baseline |
+|---|---|---|---|---|---|---|
+| Baseline | 8 | 2 | D | 512 | 1 | 1 |
+| Fine-grained | 16 | 4 | D | 256 | 1 | 2 |
+| Latent, same F | 16 | 4 | D/4 | 256 | 1/4 | 1/2 |
+| Latent, recovered compute | 16 | 4 | D/4 | 1024 | 1 | 1/2 |
+
+Payload means activation bytes sent per assignment at fixed dtype and remote
+routing fraction, without deduplication; excludes IDs/counts and communication
+protocol overhead. Return vectors have the same width, so the same ratios apply
+to the combined dispatch/return activation volume. Assignments grow from 2*T to
+4*T. The latent payload ratio is (4*D/4)/(2*D)=1/2, independent of F.
+
+The learner initially reused this 1/2 communication ratio for expert compute.
+Compute also depends on F: at latent width D/4, F=512 gives half the baseline
+routed compute, while F=1024 restores it. Hidden activations stay on the expert's
+rank, so increasing F increases compute, parameters and local activation memory,
+not dispatch-vector width. Baseline and fine-grained expert parameter counts are
+equal: 8*3*D*512 = 16*3*D*256. Equal active compute does not imply equal total
+parameters; the final latent design has twice the baseline routed parameters.
+
+### Placement and whole-block costs
+
+The router reads original [T,D] features, avoiding a forced routing bottleneck.
+The shared expert is replicated and full-width, giving every token a path outside
+the routed latent compression. Replication avoids its EP activation exchanges,
+not training-time synchronization of replicated parameter gradients. A remote
+shared branch could instead benefit from compressed messages, with a different
+capacity/placement tradeoff. Compression does not automatically improve latency.
+
+Equal routed-expert FLOPs excludes latent down/up projections, latent RMSNorm,
+the new full-width shared branch, and the larger router (16 rather than 8 outputs).
+More assignments also add dispatch/combination work and metadata. Kernel launch,
+memory traffic and communication costs matter. Shared/routed computation does
+not automatically overlap; that needs explicit scheduling. Do not call the whole
+block compute-matched or faster without including these costs and measuring it.
+
+### Routing, balancing and low precision
+
+Use raw scores plus selection bias for top-k, then normalize the selected RAW
+scores for mixing. Scores are learned affinities, not guaranteed expert quality;
+balancing encourages, rather than guarantees, equal future load.
+
+With four microbatches per optimizer step, freeze biases/bin boundaries across
+all four, sum histogram counts, optionally SUM across the process group, then
+estimate replacement biases and reset once at the optimizer boundary (the runner
+does this after optimizer.step). These statistics describe the completed window,
+not scores recomputed with the newly updated model weights.
+
+Low precision does not inherently enlarge activations. SwiGLU outliers can force
+a larger shared block scale, reducing resolution for smaller neighbors and
+potentially rounding them to zero. SiTU-GLU softcaps gate/value branches to reduce
+outliers and their scale distortion. Its intermediate magnitude is bounded by
+beta_gate*beta_value; the subsequent down projection is not bounded by that
+constant. This supports numerical stability without guaranteeing stable training.
+
+### Completion boundary and verification
+
+GroupedMoE already exposes the components discussed; at the learner's request,
+no redundant configuration module or new implementation was added for stage 14.
+Educational EP forward/backward and histogram pooling have their own two-rank
+tests, not an integrated distributed latent decoder. Distributed exact gathering,
+full distributed training, latent/SiTU decoder/runner forwarding and production
+optimizations remain optional extensions. Stage 14 adds reasoning notes, not a
+new runtime or numerical benchmark. See ROADMAP.md for subsequent broader topics.
+
 ## Quantile balancing (stage 13, educational scope complete)
 
 Completed: exact/histogram estimators, optimizer-window lifecycle, local training
 integration, toy-run interpretation and optional distributed histogram pooling.
 Latest focused verification: 328 MoE/training tests passed; lint and typing passed
 for the pooling implementation and its tests. Full distributed training and exact
-global score gathering are not implemented. Next: frontier-model case studies.
+global score gathering are not implemented. The final design review is complete
+above; no MoE stage remains active.
 
 Toy-run interpretation: the learner's 800-step sigmoid/histogram run with four
 experts and top-2 routing maintained assignment shares near 25% per expert (about
@@ -254,7 +336,7 @@ The later toy-run interpretation and optional histogram all-reduce extension are
 now complete (see the current checkpoint above). Do not repeat local wiring.
 
 
-## LatentMoE: routed width versus expert intermediate width (stage 12, active)
+## LatentMoE: routed width versus expert intermediate width (stage 12, completed)
 
 The learner implemented optional `d_latent` in `GroupedMoE`; Codex reviewed and
 added tests, not the algorithm. Down/up projections surround only the routed

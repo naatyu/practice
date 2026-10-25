@@ -69,6 +69,10 @@ write it as a worked example to study. The recurrent KDA implementation is mine.
 - Recurrent linear attention, DeltaNet, gated DeltaNet, and Kimi Delta Attention
 - Full KDA layer with short convolutions, learned gates, and fixed-size cache
 - Educational chunkwise KDA (AI-authored worked example)
+- MoE routing, grouped experts, capacity policies, shared experts and balancing
+- Educational expert-parallel forward/backward with two-rank reference tests
+- LatentMoE, SiTU-GLU, and exact/histogram quantile balancing
+- MoE architecture synthesis: compute, communication and numerical tradeoffs
 - Vectorized K-means prediction as a separate classical-ML warmup
 
 ## Current checkpoint
@@ -81,7 +85,7 @@ The repository also contains an exploratory Multi-Head Latent Attention (MLA)
 implementation, but MLA remains work in progress and does not yet have the same
 test coverage as the completed components.
 
-The active track is [Mixture of Experts](moe/README.md): routing, expert batching,
+The [Mixture of Experts](moe/README.md) educational track is complete (stages 1–14): routing, expert batching,
 packed weights, and selectable loop/grouped-MM execution are tested on CPU.
 Decoder integration, per-layer routing diagnostics, tiny training runs,
 auxiliary balancing, and capacity-limited/dropless dispatch are complete.
@@ -92,8 +96,13 @@ Auxiliary-loss-free balancing and sigmoid routing are complete too, including
 their diagnostic semantics and toy-run comparison. Stage 10's FLOP/memory
 accounting and expert-parallel systems reasoning are complete. The educational
 two-process CPU expert-parallel forward now works with grouped experts and
-matches a single-device reference. Persistent end-to-end regression tests are
-the next checkpoint; distributed backward is a separate optional extension.
+matches a single-device reference. A separate AI-authored backward example and
+persistent two-rank output/gradient tests cover empty-rank cases. Latent routed
+experts, optional SiTU-GLU, exact/histogram balancing, local training integration,
+and optional distributed histogram pooling are implemented/tested. The final
+design review connects those components; it is not a production-model reproduction.
+Full distributed training, global exact-quantile gathering, and decoder/training
+forwarding of latent/SiTU options remain optional extensions, not stage blockers.
 
 FLOP and memory accounting and YaRN remain subsequent roadmap topics.
 FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
@@ -106,7 +115,7 @@ implementation remains deferred. The complete ordered plan is in
 | --- | --- | --- |
 | Attention fundamentals and local/sliding-window attention | [`attention`](attention) | Complete |
 | Linear attention and KDA | [`linear_attention`](linear_attention) | Educational track complete; chunkwise example AI-authored |
-| Mixture of Experts | [`moe`](moe) | Stages 1–10 complete; EP forward verified, regression coverage next |
+| Mixture of Experts | [`moe`](moe) | Stages 1–14 complete for educational scope; production extensions deferred |
 | MHA, GQA, MQA, exploratory MLA | [`multi_head_attention`](multi_head_attention) | MHA/GQA/MQA complete; MLA WIP |
 | Normalization and feed-forward layers | [`normalization`](normalization), [`mlp`](mlp) | Complete |
 | Transformer and decoder | [`transformer_block`](transformer_block), [`decoder_model`](decoder_model) | Complete |
@@ -115,7 +124,7 @@ implementation remains deferred. The complete ordered plan is in
 | KV-cache concepts | [`kv_cache`](kv_cache) | Complete |
 | Tokenization | [`bpe`](bpe) | Complete |
 | Sampling and speculative decoding | [`generation`](generation) | Complete reference and cached batched paths |
-| FlashAttention | [`flash-attention`](flash-attention) | Theory notes complete; implementation deferred |
+| FlashAttention | [`flash_attention`](flash_attention) | Theory notes complete; implementation deferred |
 | Classical ML warmups | [`machine_learning`](machine_learning) | K-means prediction complete |
 
 ## Running the exercises

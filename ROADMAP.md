@@ -10,7 +10,7 @@ the full layer, fixed-size convolution and recurrent caches, log-space
 retention, low-rank projections, and per-head rate initialization. The tested
 chunkwise operator is explicitly AI-authored teaching material; recurrence
 remains the default. Optimized WY kernels are outside the completed scope.
-The learner chose MoE as the next active track. Routing, naive and expert-batched
+The learner subsequently completed the educational MoE track. Routing, naive and expert-batched
 MoE, packed weights, and grouped-GEMM dispatch/combine are implemented and
 tested on CPU, with a reproducible comparison in `moe/SOLUTIONS.md`.
 Dense/MoE decoder integration and seven routing diagnostics are implemented and
@@ -44,8 +44,11 @@ replacement/reset now support exact (num_bins=None) and histogram QB. Model/
 training-runner wiring is now implemented/tested, with exclusive once-per-step
 updates and exact/histogram CLI modes. The learner's 800-step toy run has been
 interpreted, and optional distributed histogram SUM pooling is implemented/tested,
-including empty ranks. Stage 13 is complete for the educational scope.
-Next: stage 14, frontier-model case studies. Distributed exact-score gathering,
+including empty ranks. Stage 14's final architecture synthesis is also complete:
+fine-grained/latent compute and payload ratios, shared/router placement,
+balancing timing, and low-precision outlier control. Existing components already
+support the miniature design; no duplicate assembly exercise was required.
+MoE stages 1–14 are complete for educational scope. Distributed exact-score gathering,
 distributed training-runner integration, and decoder/training forwarding of
 LatentMoE/SiTU options remain outside the implemented scope.
 See `moe/README.md`.
@@ -341,7 +344,7 @@ written; the implementation file remains intentionally empty.
   See `linear_attention/README.md` for exercise prompts and
   `linear_attention/SOLUTIONS.md` for completed reasoning and authorship notes.
 
-### 23. Mixture of Experts (active)
+### 23. Mixture of Experts (educational track complete)
 
 1. MoE fundamentals: experts, sparsity, and active compute — done
 2. Naive top-k routing and weighted expert combination — done
@@ -392,7 +395,12 @@ written; the implementation file remains intentionally empty.
     toy-run interpretation complete; optional distributed histogram SUM pooling
     tested on two CPU/Gloo ranks, including empty/global-empty windows;
     no distributed exact gathering or distributed training-runner integration
-14. Frontier-model case studies: miniature MoE blocks and training tradeoffs — next
+14. Frontier-style architecture synthesis and training tradeoffs — done (reasoning)
+    - Matched routed-expert compute across fine-grained and latent designs
+    - Distinguished dispatch payload, parameters, FLOPs and measured runtime
+    - Full-width router/shared branch, unbiased mixing and QB window timing
+    - SiTU-GLU outlier control and block-scale precision tradeoffs
+    - Existing GroupedMoE components suffice; no new model reproduction claimed
 
 EP references: [PyTorch distributed collectives](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
@@ -471,7 +479,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [stages 1–13 educational scope done; frontier-model case studies next]
+-> MoE [stages 1–14 educational scope done]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

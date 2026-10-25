@@ -17,7 +17,9 @@ training tests cover forwarding, update timing, conflicts and plot isolation.
 These runner calls still reflect local counts only. The router separately supports
 explicit process-group histogram pooling, tested with two CPU/Gloo ranks; this
 runner does not initialize groups or pass one through. Stage 13's educational
-scope is complete, including toy-run interpretation; next: frontier-model cases.
+scope is complete, including toy-run interpretation. The subsequent stage 14
+architecture review is also complete; see `moe/SOLUTIONS.md`. It adds no new
+training integration or production-performance claims.
 
 ## One optimizer step
 

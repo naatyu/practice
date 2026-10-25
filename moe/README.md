@@ -35,7 +35,7 @@ the MoE tests: `uv run python -m pytest -q moe/tests`.
 11. Educational expert parallelism in PyTorch — forward/backward examples verified
 12. LatentMoE, normalization, and SiTU-GLU — educational routed path complete
 13. Quantile balancing: exact implementation to histogram estimation
-14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
+14. Frontier-style architecture synthesis and training tradeoffs — completed reasoning
 
 ## Current checkpoint
 
@@ -50,9 +50,33 @@ implemented/tested. The local end-of-step update now works in both exact and
 histogram modes. Model/runner/CLI forwarding and once-per-step calls are now
 implemented/tested. Optional distributed histogram pooling is also implemented;
 the training runner remains local (no distributed decoder integration).
-The learner's 800-step toy-run plots have been interpreted. Stage 13 is complete
-for our educational scope; next: stage 14, frontier-model case studies.
+The learner's 800-step toy-run plots have been interpreted. Stage 14's final
+design review is complete too: all 14 MoE stages are done for educational scope.
 Completed reasoning and experiments are in `SOLUTIONS.md`.
+
+### Final exercise: architecture synthesis (completed)
+
+Use the existing components to reason through a miniature design, not reproduce
+a named production model. No additional assembly code was needed or added.
+The following prompts were discussed; corrected answers are in `SOLUTIONS.md`:
+
+- Starting from 8 full-width experts, top-2 and hidden_dim=512, switch to 16
+  experts with hidden_dim=256. What top-k preserves routed-expert matmul compute?
+- How do token-expert assignments and full-width communication change?
+- With d_latent=d_model/4, what happens to payload and routed-expert compute?
+  What hidden_dim recovers the original routed-expert compute budget?
+- Where should router/shared branches read their inputs, and why?
+- Which scores select experts, which scores weight them, and when is QB updated
+  with four accumulated microbatches?
+- Which extra operations prevent claiming equal whole-block cost? Why can
+  SiTU-GLU help block-scaled low-precision computation?
+
+Scope boundary: the single-device GroupedMoE composes latent/shared/SiTU/QB
+options. Educational EP and histogram pooling have separate distributed tests;
+there is no integrated distributed latent training runner or production benchmark.
+Latent/SiTU decoder/training option forwarding and distributed exact quantiles
+remain optional future work. Choose the next broader topic from `ROADMAP.md`;
+do not repeat completed MoE wiring to close this stage.
 
 ### Distributed histogram pooling
 
@@ -209,7 +233,7 @@ modes, defaults, recorded diagnostics/configuration, and distinct plot outputs.
 Codex supplied this wiring at the learner's explicit request, not a standing rule.
 The runner remains local; the router's optional histogram all-reduce is separately
 tested. No exact-mode all-gather or scaled-up training result is claimed.
-Toy-run interpretation and histogram pooling are complete. Next: frontier cases.
+Toy-run interpretation, histogram pooling and the final design review are complete.
 
 ### Stage 12: latent routed path checkpoint
 
@@ -254,7 +278,8 @@ only to routed experts. Both backends support it with or without latent width;
 the full-width shared expert remains SwiGLU. Docstrings specify tuple order and
 finite-positive cap semantics. Integration tests cover independent reference
 outputs/all gradients with caps, validation forwarding and shared-branch isolation.
-Next: stage 13, quantile balancing. Do not repeat normalization, backend activation
+At this historical checkpoint, stage 13 was next; it is now complete.
+Do not repeat normalization, backend activation
 or GroupedMoE wiring. Decoder/training configuration and latent EP are not wired.
 
 Fundamentals and the minimal `TopKRouter` are implemented and reviewed. It maps
@@ -484,7 +509,7 @@ The launch uses an explicit loopback master address because standalone hostname
 rendezvous hung on this machine. Default port is 29500; use `--master-port` to
 choose another free port if needed.
 
-Stage 12 is now active: see the latent routed path checkpoint near the top.
+This historical handoff led to stage 12, now complete; see the current checkpoint.
 
 CPU processes teach correctness, not GPU performance. CUDA/NCCL is a later run
 when multiple GPUs are available. The local workstation has one CUDA GPU;
