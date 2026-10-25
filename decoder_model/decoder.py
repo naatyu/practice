@@ -22,6 +22,11 @@ class DecoderOutput:
 
 
 class DecoderModel(nn.Module):
+    """Decoder with optional per-layer MoE QB; None bins = exact, positive = histogram.
+
+    QB options reach every router; the training loop owns end-of-step updates.
+    """
+
     def __init__(
         self,
         vocab_size: int,
@@ -43,6 +48,8 @@ class DecoderModel(nn.Module):
         shared_hidden_dim: int | None = None,
         shared_expert_gate: bool = False,
         score_func: Literal["softmax", "sigmoid"] = "softmax",
+        use_quantile_balancing: bool = False,
+        num_bins: int | None = None,
     ):
         super().__init__()
 
@@ -81,6 +88,8 @@ class DecoderModel(nn.Module):
                     shared_hidden_dim=shared_hidden_dim,
                     shared_expert_gate=shared_expert_gate,
                     score_func=score_func,
+                    use_quantile_balancing=use_quantile_balancing,
+                    num_bins=num_bins,
                 )
                 for _ in range(n_layers)
             ]

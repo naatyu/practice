@@ -1,5 +1,24 @@
 # Language-model training interview practice: completed solutions
 
+## Quantile-balancing update scheduling
+
+At the learner's request, Codex wired QB options through the model/runner and
+added an exclusive branch after train_step returns: QB update if enabled,
+otherwise sign update if its rate is positive. Since train_step already runs
+backward, clipping and optimizer.step, the new bias affects only subsequent
+forwards. Record diagnostics before reset_metrics; QB updates reset only their
+own histograms/exact-score chunks. One training batch per step is used here.
+
+ModelConfig/CLI use use_quantile_balancing (default False) and num_bins (None
+for exact, positive count for histogram). This runner rejects QB plus sign updates
+and nonzero auxiliary balancing with either strategy. Z-loss keeps its existing
+score-mode policy. History and plot tags record exact/histogram mode. Ten new
+training tests cover forwarding, update timing, conflicts and plot isolation.
+These runner calls still reflect local counts only. The router separately supports
+explicit process-group histogram pooling, tested with two CPU/Gloo ranks; this
+runner does not initialize groups or pass one through. Stage 13's educational
+scope is complete, including toy-run interpretation; next: frontier-model cases.
+
 ## One optimizer step
 
 The correct order for one ordinary training batch is:

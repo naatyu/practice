@@ -35,6 +35,8 @@ class ModelConfig:
     shared_hidden_dim: int | None = None
     shared_expert_gate: bool = False
     score_func: Literal["softmax", "sigmoid"] = "softmax"
+    use_quantile_balancing: bool = False
+    num_bins: int | None = None  # QB: None = exact; positive count = histogram.
 
 
 @dataclass
@@ -56,12 +58,22 @@ def train_moe(
     z_loss_coefficient: float = 0.0,
     bias_update_rate: float = 0.0,
 ) -> list[dict]:
-    """Overfit one fixed batch; record metrics once per optimizer step."""
+    """Overfit one fixed batch; record metrics/update bias once per optimizer step.
+
+    Optional QB is local only: exact when num_bins=None, otherwise histogram.
+    QB, sign-based updates and auxiliary balancing are mutually exclusive here.
+    """
     if steps < 1:
         raise ValueError("steps must be positive")
     if not isfinite(bias_update_rate) or bias_update_rate < 0:
         raise ValueError("bias_update_rate must be finite and non-negative")
-    if bias_update_rate > 0 and aux_loss_coefficient != 0:
+    if model_config.use_quantile_balancing and bias_update_rate > 0:
+        raise ValueError(
+            "Quantile balancing and sign-based bias updates cannot both be enabled"
+        )
+    if (
+        bias_update_rate > 0 or model_config.use_quantile_balancing
+    ) and aux_loss_coefficient != 0:
         raise ValueError(
             "Auxiliary balancing loss and expert bias updates cannot both be enabled"
         )
@@ -110,8 +122,10 @@ def train_moe(
         )
 
         # Update once per optimizer step, before resetting assignment counts.
-        if bias_update_rate > 0.0:
-            for moe in moes:
+        for moe in moes:
+            if moe.router.use_quantile_balancing:
+                moe.router.update_quantile_bias()
+            elif bias_update_rate > 0.0:
                 moe.router.update_expert_bias(rate=bias_update_rate)
 
         layer_metrics = [
@@ -132,6 +146,8 @@ def train_moe(
                 "z_loss": losses.z_loss.item() if losses.z_loss is not None else None,
                 "z_loss_coefficient": z_loss_coefficient,
                 "bias_update_rate": bias_update_rate,
+                "use_quantile_balancing": model_config.use_quantile_balancing,
+                "num_bins": model_config.num_bins,
                 "score_func": model_config.score_func,
                 "capacity_factor": model_config.capacity_factor,
                 "drop_policy": model_config.drop_policy,
@@ -186,6 +202,11 @@ def plot_metrics(history: list[dict], output_path: str | Path) -> None:
     if bias_rate > 0:
         run_tag += f"_bias_{bias_rate:g}"
         run_label += f", bias update rate = {bias_rate:g}"
+    if history[0].get("use_quantile_balancing", False):
+        bins = history[0].get("num_bins")
+        mode = "exact" if bins is None else f"hist_{bins}"
+        run_tag += f"_qb_{mode}"
+        run_label += f", quantile balancing = {mode}"
     capacity = history[0]["capacity_factor"]
     policy = history[0]["drop_policy"]
     capacity_tag = (
@@ -371,6 +392,17 @@ if __name__ == "__main__":
     parser.add_argument("--aux-loss-coefficient", type=float, default=0.0)
     parser.add_argument("--z-loss-coefficient", type=float, default=0.0)
     parser.add_argument("--bias-update-rate", type=float, default=0.0)
+    parser.add_argument(
+        "--use-quantile-balancing",
+        action="store_true",
+        help="Use a local QB replacement once per optimizer step instead of sign updates.",
+    )
+    parser.add_argument(
+        "--num-bins",
+        type=int,
+        default=None,
+        help="QB histogram bin count; omit for exact quantiles. Requires QB.",
+    )
     parser.add_argument("--capacity-factor", type=float, default=None)
     parser.add_argument("--drop-policy", choices=["position", "probs"], default="probs")
     parser.add_argument("--shared-hidden-dim", type=int, default=None)
@@ -392,6 +424,8 @@ if __name__ == "__main__":
             shared_hidden_dim=args.shared_hidden_dim,
             shared_expert_gate=args.shared_expert_gate,
             score_func=args.score_func,
+            use_quantile_balancing=args.use_quantile_balancing,
+            num_bins=args.num_bins,
         ),
         OptimizerConfig(),
         steps=args.steps,

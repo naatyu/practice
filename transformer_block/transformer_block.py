@@ -11,6 +11,8 @@ from positional_encoding import RotaryPositionalEncoding
 
 
 class TransformerBlock(nn.Module):
+    """Pre-norm block; optional QB mode/bin count are forwarded to its MoE router."""
+
     def __init__(
         self,
         d_model: int,
@@ -29,8 +31,12 @@ class TransformerBlock(nn.Module):
         shared_hidden_dim: int | None = None,
         shared_expert_gate: bool = False,
         score_func: Literal["softmax", "sigmoid"] = "softmax",
+        use_quantile_balancing: bool = False,
+        num_bins: int | None = None,
     ):
         super().__init__()
+        if num_experts is None and (use_quantile_balancing or num_bins is not None):
+            raise ValueError("Quantile balancing options require MoE experts")
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
         self.attn = MultiHeadAttention(
             d_model=d_model,
@@ -58,6 +64,8 @@ class TransformerBlock(nn.Module):
                 shared_hidden_dim=shared_hidden_dim,
                 shared_expert_gate=shared_expert_gate,
                 score_func=score_func,
+                use_quantile_balancing=use_quantile_balancing,
+                num_bins=num_bins,
             )
         else:
             self.ffn = SwiGLU(d_model, hidden_dim, dropout_p)

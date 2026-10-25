@@ -44,8 +44,172 @@ code. Stage 11's two-process EP forward and separate AI-authored backward
 example are verified, including persistent output/gradient reference tests.
 Stage 12's learner-written latent routed path in `GroupedMoE` is now tested.
 Post-combination latent RMSNorm and optional routed-expert SiTU-GLU are now
-implemented/tested, including GroupedMoE wiring. Next: stage 13, quantile balancing.
+implemented/tested, including GroupedMoE wiring. Stage 13's exact quantile-bias
+estimator, histogram accumulation and histogram quantile extraction are now
+implemented/tested. The local end-of-step update now works in both exact and
+histogram modes. Model/runner/CLI forwarding and once-per-step calls are now
+implemented/tested. Optional distributed histogram pooling is also implemented;
+the training runner remains local (no distributed decoder integration).
+The learner's 800-step toy-run plots have been interpreted. Stage 13 is complete
+for our educational scope; next: stage 14, frontier-model case studies.
 Completed reasoning and experiments are in `SOLUTIONS.md`.
+
+### Distributed histogram pooling
+
+Call `router.update_quantile_bias(process_group=group)` once per optimizer step
+on every member of the same router's group, including ranks with no local tokens.
+It sums `[num_experts,num_bins]` counts before checking for an empty global window,
+then estimates replacement biases and resets counts on every rank. Biases, bin
+counts and accumulation windows must match across ranks; initialize the group
+outside the router. Omit the argument for local behavior, even with distributed
+initialized. Distributed exact mode explicitly raises `NotImplementedError`.
+Two-process CPU/Gloo tests cover unequal shards, either rank empty, globally empty
+windows, repeated updates and unchanged default-local behavior.
+
+### Stage 13: exact quantile estimator checkpoint
+
+The learner implemented `TopKRouter.estimate_quantile_bias` as a no-grad method
+with explicit scores `[T,E]`, current bias `[E]`, and top-k arguments. Keeping it
+as a method was their choice; it returns targets without modifying router state.
+Assume nonempty raw sigmoid scores and `1 <= top_k < E` for this first exercise.
+Biased top-(K+1) yields the strongest-rejected cutoff `[T,1]`; subtract raw scores,
+take the `K/E` quantile over tokens (`dim=0`), then mean-center the `[E]` result.
+This is a replacement bias estimate, not an additive correction. Other experts'
+cutoffs are held fixed during estimation; one update does not guarantee balance.
+
+Codex added concise comments and 10 tests covering hand-computed linear quantiles,
+single-token raw-score behavior, nonmutation/no autograd, expert/token permutation,
+noncontiguous scores, common-bias shifts, and tied scores. The existing sign-based
+update remains available as a separate strategy. Optional QB accumulation and
+local bias replacement are now wired in the router as described below; no
+training runner or distributed synchronization calls them yet.
+Histogram accumulation was subsequently supplied by Codex at the learner's
+explicit request, with a five-step commented walkthrough and computation tests.
+Learner writes subsequent algorithms; Codex writes tests and requested plumbing.
+Handle top-k=E and invalid
+inputs explicitly before any production-facing integration; they are outside
+the current estimator's documented domain.
+
+### Histogram accumulation: AI-authored teaching implementation
+
+`TopKRouter.accumulate_bias_histogram(scores, bias, top_k, histogram)` accepts
+scores `[T,E]`, frozen biases `[E]` and an int32/int64 counter buffer `[E,num_bins]`.
+It adds counts in place and returns scalar `(lower_bound, bin_width)` for later
+extraction. Initialize the buffer to zeros on the scores' device. Freeze bias
+values and bin count for every microbatch/rank in an accumulation window, then
+reset counts before changing the bounds. This helper does not manage that window.
+
+The five numbered code comments cover bounds `[b_min-1,b_max+1]`, biased top-(K+1)
+cutoffs, required biases from raw scores, floor/clamped bin indices, and expert-first
+`scatter_add_`. Every token contributes to every expert's distribution, selected
+or not; each histogram row gains T counts. Low-precision inputs compute in FP32;
+float64 is preserved. Empty microbatches are harmless. Finite sigmoid scores and
+finite biases and compatible shape/dtype/device/top-k are caller assumptions.
+Indices stay int64; scatter-add source counts now use `histogram.dtype` so int32
+counters work without casting the indices. Counters reset per optimizer step;
+the caller must ensure pooled counts per bin fit the chosen dtype. Int32 halves
+counter storage and is sufficient for this workload.
+At the learner's request, all explicit validation was removed from this internal
+helper, including algorithm-domain checks; validate at the integration boundary.
+
+The 30 tests check independent scalar counts, both endpoints, exact internal bin
+edges, four score dtypes, both counter dtypes, noncontiguous scores, empty input,
+no autograd/input-state mutation, and pooled counts versus summed microbatch/rank
+counts. The rank-sum check is local arithmetic, not a new distributed launch.
+The learner has now completed extraction, below. Training integration is not
+complete. Revisit the interpolation example if needed; the learner benefits from
+numeric examples before tensor operations.
+
+### Histogram extraction: learner implementation complete
+
+`estimate_bias_from_histogram` reads valid `[E,num_bins]` pooled counts, scalar
+lower bound/width and K; it returns centered replacement biases `[E]` without
+mutating counters, metadata or router state. Preconditions are equal positive
+row totals T, positive width and `1 <= K < E`; validation lives elsewhere by
+explicit learner preference. Counts are accumulated over bins, target count is
+`T*K/E`, and batched searchsorted finds the first cumulative count >= target.
+Expanded scalar targets are `[E,1]` and made contiguous for the lookup. Gather
+bin and cumulative counts with `[E,1]` indices; count-before is their difference.
+Interpolate with `(target-count_before)/bin_count`, then left edge plus fraction
+times width. Squeeze the singleton bin dimension and mean-center the result.
+
+Codex reviewed, added short comments and 17 extraction tests, not the algorithm.
+Int32 and int64 counters produce identical extracted biases in a dedicated case.
+Tests include hand values, bin-zero/empty gaps/exact boundaries, scalar-reference
+agreement after microbatch accumulation, state/input nonmutation, no autograd,
+strided histograms and expert-order/common-offset invariance.
+Local replacement/reset is now implemented as described in the latest checkpoint
+below. Training-runner configuration and optional router-level distributed
+histogram pooling are now implemented; the runner itself remains local.
+
+At the learner's request Codex added the repeated buffer plumbing: TopKRouter
+originally accepted keyword-only `num_bins` (effective default 256), validated positivity, and
+registers zero-initialized `bias_histogram [E,num_bins]` as non-persistent int32.
+It follows the module device, is not optimized/checkpointed, and is untouched by
+disabled/evaluation forward or reset_metrics. Tests cover these properties and bin configuration.
+This was a one-time delegation so the learner could focus on quantile balancing,
+not a standing preference for Codex to do repeated plumbing.
+
+The learner subsequently added `use_quantile_balancing=False` and training-only
+forward accumulation of all raw scores flattened from [B,S,E] to [T,E]. Their
+initial hard-coded False assignment and missing reshape were reviewed and fixed
+by the learner. Codex added requested constructor checks: QB requires K<E, and
+explicit num_bins requires QB. The original omitted-bin behavior (256) was later
+replaced by exact mode, as described below. Ordinary routing still
+allows K=E. Both softmax and sigmoid accumulation paths are tested; no biases
+change during forward, and evaluation/disabled modes do not accumulate.
+The current mode switch and local step update supersede that checkpoint:
+
+| Configuration | Accumulation | Local step update |
+|---|---|---|
+| QB off | None; no histogram allocated | No-op |
+| QB on, num_bins=None | Detached score chunks [T_i,E] | Concatenate, exact quantile, replace, clear chunks |
+| QB on, positive num_bins | Int32 histogram [E,num_bins] | Recover OLD bounds, estimate, replace, zero counts |
+
+The learner implemented the histogram branch of `update_quantile_bias` in the
+correct bounds -> estimate -> copy -> reset order. At their explicit request,
+Codex wired the mode switch and exact accumulation/update branch, and added
+empty/disabled/eval no-ops. Both modes keep bias fixed across forwards and copy
+new biases in place once the window ends. Diagnostic reset never clears the QB
+window. Caller must invoke the update after all microbatch backwards, once per
+optimizer step, instead of the sign update. Exact mode stores O(T*E) detached
+scores on device, uses list append (not repeated concatenation), and concatenates
+once at the boundary. The temporary list is not a buffer/checkpoint: finish the
+window before moving devices or serializing training progress. Histogram counts
+remain non-persistent; disabled/exact modes register None, allocating no histogram.
+
+Nine lifecycle tests cover both score functions/modes across two windows,
+full-step estimates, preserved buffer identity, gradients, empty/repeated update
+no-ops, evaluation isolation and disabled mode. These were the original local-mode
+tests; the optional distributed histogram extension is described above.
+
+### Runner update wiring complete (assistant-authored, requested)
+
+`use_quantile_balancing` and `num_bins` now flow through ModelConfig -> DecoderModel
+-> TransformerBlock -> GroupedMoE -> TopKRouter. After train_step has completed
+backward and optimizer.step, the runner calls each enabled router's QB update;
+otherwise it calls the existing sign update only if its rate is positive.
+The branches are exclusive. Diagnostic metrics are logged before their reset;
+the QB update clears only its own counts/chunks. The current toy runner uses one
+batch per optimizer step, while the router helpers support multiple forwards.
+
+This runner rejects QB plus a positive sign rate, or either update strategy plus
+nonzero auxiliary balancing. Z-loss remains independently configurable with its
+existing sigmoid restriction. History records QB/bin settings, and plot filenames
+and titles distinguish exact/histogram QB. Defaults preserve existing runs.
+
+```bash
+uv run python -m training.train_moe --steps 100 --score-func sigmoid --use-quantile-balancing
+uv run python -m training.train_moe --steps 100 --score-func sigmoid --use-quantile-balancing --num-bins 256
+```
+
+The first run uses exact quantiles; the second uses histograms. Ten new training
+tests cover timing, strategy exclusivity, forwarding to every layer, both scoring
+modes, defaults, recorded diagnostics/configuration, and distinct plot outputs.
+Codex supplied this wiring at the learner's explicit request, not a standing rule.
+The runner remains local; the router's optional histogram all-reduce is separately
+tested. No exact-mode all-gather or scaled-up training result is claimed.
+Toy-run interpretation and histogram pooling are complete. Next: frontier cases.
 
 ### Stage 12: latent routed path checkpoint
 
@@ -335,8 +499,10 @@ algorithm, Codex writes tests and requested launch plumbing.
 References: [PyTorch all-to-all](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
 
-Last verification: 581 repository tests pass, including 38 latent-path/wiring tests
-and 26 new SiTU-GLU tests.
+Last verification: 669 repository tests pass, including ten training-wiring tests,
+nine local QB lifecycle
+tests, 30 histogram accumulation
+and 17 extraction tests. Five helper-validation cases were removed with the checks.
 The backward source and tests
 pass Ruff, formatting, and ty checks; the original EP files are unchanged.
 A real two-rank CPU forward and the ad-hoc distributed-reference comparison

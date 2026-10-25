@@ -7,6 +7,101 @@ from moe.losses import load_balancing_loss
 from moe.router import TopKRouter
 
 
+@pytest.mark.parametrize("num_bins", [1, 17, 256])
+def test_bias_histogram_is_zero_nonpersistent_int32_buffer(num_bins):
+    router = TopKRouter(4, 4, 2, use_quantile_balancing=True, num_bins=num_bins)
+    histogram = router.bias_histogram
+    assert histogram is not None
+    assert histogram.shape == (4, num_bins)
+    assert histogram.dtype == torch.int32
+    assert not histogram.requires_grad
+    assert histogram.count_nonzero() == 0
+    assert dict(router.named_buffers())["bias_histogram"] is histogram
+    assert "bias_histogram" not in dict(router.named_parameters())
+    assert "bias_histogram" not in router.state_dict()
+    assert "expert_bias" in router.state_dict()
+
+
+def test_histogram_is_not_reset_by_metrics_or_changed_by_forward():
+    router = TopKRouter(4, 4, 2, use_quantile_balancing=True, num_bins=256).eval()
+    assert router.bias_histogram is not None
+    assert router.bias_histogram.shape == (4, 256)
+    router.bias_histogram.fill_(7)
+    before = router.bias_histogram.clone()
+    router(torch.randn(2, 3, 4))
+    router.reset_metrics()
+    torch.testing.assert_close(router.bias_histogram, before)
+    # Module dtype conversions must leave integer counters integer.
+    router.double()
+    assert router.bias_histogram.dtype == torch.int32
+    assert router.bias_histogram.device == router.router.weight.device
+    torch.testing.assert_close(router.bias_histogram, before)
+    # Meta transfer checks buffer device tracking without requiring a GPU.
+    router.to("meta")
+    assert router.bias_histogram.device == router.router.weight.device
+
+
+@pytest.mark.parametrize("num_bins", [0, -1])
+def test_invalid_histogram_bin_count_rejected_at_construction(num_bins):
+    with pytest.raises(ValueError, match="num_bins"):
+        TopKRouter(4, 4, 2, use_quantile_balancing=True, num_bins=num_bins)
+
+
+@pytest.mark.parametrize("num_bins", [0, 17, 256])
+def test_explicit_num_bins_requires_quantile_balancing(num_bins):
+    with pytest.raises(ValueError, match="requires use_quantile_balancing"):
+        TopKRouter(4, 4, 2, num_bins=num_bins)
+
+
+def test_all_expert_routing_allowed_without_qb_but_rejected_with_qb():
+    router = TopKRouter(4, 4, 4)
+    assert router(torch.randn(1, 2, 4))[0].shape == (1, 2, 4)
+    with pytest.raises(ValueError, match="top_k < num_experts"):
+        TopKRouter(4, 4, 4, use_quantile_balancing=True)
+
+
+@pytest.mark.parametrize("score_func", ["sigmoid", "softmax"])
+def test_qb_training_accumulates_all_raw_scores_without_changing_routes(score_func):
+    torch.manual_seed(140)
+    router = TopKRouter(
+        4, 4, 2, score_func=score_func, use_quantile_balancing=True, num_bins=256
+    )
+    baseline = TopKRouter(4, 4, 2, score_func=score_func)
+    baseline.load_state_dict(router.state_dict())
+    with torch.no_grad():
+        router.expert_bias.copy_(torch.tensor([0.1, -0.1, 0.05, 0.0]))
+        baseline.expert_bias.copy_(router.expert_bias)
+    original_bias = router.expert_bias.clone()
+    assert router.bias_histogram is not None
+    expected_histogram = torch.zeros_like(router.bias_histogram)
+    assert router.use_quantile_balancing
+    assert router.bias_histogram.shape == (4, 256)
+    for sequence_length in (3, 2):
+        x = torch.randn(2, sequence_length, 4, requires_grad=True)
+        with torch.no_grad():
+            logits = router.router(x)
+            scores = logits.sigmoid() if score_func == "sigmoid" else logits.softmax(-1)
+            router.accumulate_bias_histogram(
+                scores.reshape(-1, 4), original_bias, 2, expected_histogram
+            )
+        actual = router(x)
+        torch.testing.assert_close(actual, baseline(x))
+        torch.testing.assert_close(router.bias_histogram, expected_histogram)
+        torch.testing.assert_close(router.expert_bias, original_bias)
+        (actual[1] * torch.tensor([1.0, -2.0])).sum().backward()
+        assert x.grad is not None and torch.isfinite(x.grad).all()
+    # Every expert sees all ten tokens, including those not routed to it.
+    torch.testing.assert_close(router.bias_histogram.sum(-1), torch.full((4,), 10))
+    saved = router.bias_histogram.clone()
+    router.eval()
+    router(torch.randn(2, 3, 4))
+    torch.testing.assert_close(router.bias_histogram, saved)
+    router.reset_metrics()
+    torch.testing.assert_close(router.bias_histogram, saved)
+    assert baseline.bias_histogram is None
+    assert baseline._quantile_score_chunks == []
+
+
 @pytest.mark.parametrize("batch,sequence", [(1, 1), (2, 3)])
 def test_sigmoid_bias_weights_and_normalized_diagnostics(batch, sequence):
     router = TopKRouter(4, 4, 2, score_func="sigmoid")

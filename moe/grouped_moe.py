@@ -20,6 +20,7 @@ class GroupedMoE(nn.Module):
     Dropped assignments are not computed; surviving weights are not renormalized.
     softcap_betas=None keeps SwiGLU; (beta_gate, beta_value) enables SiTU-GLU
     for routed experts only. Both caps must be finite and strictly positive.
+    QB uses exact quantiles when num_bins=None, otherwise histogram estimation.
     """
 
     dropped_assignments_per_expert: torch.Tensor
@@ -38,6 +39,8 @@ class GroupedMoE(nn.Module):
         d_latent: int | None = None,
         softcap_betas: tuple[float, float] | None = None,
         score_func: Literal["softmax", "sigmoid"] = "softmax",
+        use_quantile_balancing: bool = False,
+        num_bins: int | None = None,
         expert_backend: Literal["loop", "grouped_mm"] = "grouped_mm",
     ):
         super().__init__()
@@ -60,7 +63,14 @@ class GroupedMoE(nn.Module):
                 f"Expected d_latent to be strictly positive, got: {d_latent}"
             )
 
-        self.router = TopKRouter(d_model, num_experts, top_k, score_func=score_func)
+        self.router = TopKRouter(
+            d_model,
+            num_experts,
+            top_k,
+            score_func=score_func,
+            use_quantile_balancing=use_quantile_balancing,
+            num_bins=num_bins,
+        )
         expert_cls = PackedExperts if expert_backend == "loop" else GroupedExperts
         self.experts = expert_cls(
             d_model if d_latent is None else d_latent,

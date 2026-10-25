@@ -36,9 +36,18 @@ LatentMoE routed path is implemented in `GroupedMoE` and covered by 38 tests;
 router/shared branch stay full-width. Post-combination latent RMSNorm is now
 implemented/tested and always enabled with `d_latent`, per learner preference.
 Optional routed-expert SiTU-GLU is implemented in both backends and wired through
-GroupedMoE, leaving the shared expert as SwiGLU. Resume with quantile balancing.
-Decoder/training forwarding and latent distributed integration remain outside
-the implemented scope.
+GroupedMoE, leaving the shared expert as SwiGLU. Stage 13's exact quantile-bias
+estimator is implemented and tested. Histogram accumulation is now implemented
+as explicitly requested AI-authored teaching code; the learner's histogram
+quantile extraction is now implemented/tested. Router-local accumulation and
+replacement/reset now support exact (num_bins=None) and histogram QB. Model/
+training-runner wiring is now implemented/tested, with exclusive once-per-step
+updates and exact/histogram CLI modes. The learner's 800-step toy run has been
+interpreted, and optional distributed histogram SUM pooling is implemented/tested,
+including empty ranks. Stage 13 is complete for the educational scope.
+Next: stage 14, frontier-model case studies. Distributed exact-score gathering,
+distributed training-runner integration, and decoder/training forwarding of
+LatentMoE/SiTU options remain outside the implemented scope.
 See `moe/README.md`.
 Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
 implementation remains deferred.
@@ -374,8 +383,16 @@ written; the implementation file remains intentionally empty.
 12. LatentMoE, normalization, and SiTU-GLU — latent routed path implemented/tested;
     post-combination RMSNorm and optional routed SiTU-GLU implemented/tested
     (no decoder/training or distributed latent wiring yet)
-13. Quantile balancing: exact implementation to histogram estimation
-14. Frontier-model case studies: miniature MoE blocks and training tradeoffs
+13. Quantile balancing — completed for educational scope;
+    exact frozen-cutoff estimator implemented/tested;
+    pooled quantile reasoning covered; AI-authored histogram accumulation tested;
+    learner-written histogram quantile extraction tested;
+    local exact/histogram accumulation and step replacement/reset tested;
+    model/runner/CLI forwarding and exclusive once-per-step calls tested;
+    toy-run interpretation complete; optional distributed histogram SUM pooling
+    tested on two CPU/Gloo ranks, including empty/global-empty windows;
+    no distributed exact gathering or distributed training-runner integration
+14. Frontier-model case studies: miniature MoE blocks and training tradeoffs — next
 
 EP references: [PyTorch distributed collectives](https://docs.pytorch.org/docs/2.14/distributed.html#torch.distributed.all_to_all_single)
 and [torchrun](https://docs.pytorch.org/docs/2.14/elastic/run.html).
@@ -454,7 +471,7 @@ References:
 ```text
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
--> MoE [stages 1–12 educational scope done; quantile balancing next]
+-> MoE [stages 1–13 educational scope done; frontier-model case studies next]
 -> FLOP and memory accounting / YaRN / deferred FlashAttention
 ```
 

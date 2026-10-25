@@ -3,6 +3,20 @@
 This file contains only the exercise prompts and interview questions.
 Completed answers and explanations are kept separately in `SOLUTIONS.md`.
 
+## Optional local MoE quantile-balancing runs
+
+```bash
+uv run python -m training.train_moe --steps 100 --score-func sigmoid --use-quantile-balancing
+uv run python -m training.train_moe --steps 100 --score-func sigmoid --use-quantile-balancing --num-bins 256
+```
+
+Omit num-bins for exact quantiles; supply it for histograms. Defaults keep QB off.
+Use zero sign-update rate and auxiliary coefficient with QB in this runner.
+See `moe/README.md` for the current interview checkpoint. The router supports
+optional distributed histogram pooling, but this runner still calls local updates.
+Stage 13 is complete; next: frontier-model case studies. Compare load-balance
+metrics and task loss, not just one curve.
+
 ## Exercise 1: One training step
 
 Implement one decoder language-model training step using unshifted token IDs

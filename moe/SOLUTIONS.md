@@ -1,5 +1,259 @@
 # Mixture of Experts: completed reasoning
 
+## Quantile balancing (stage 13, educational scope complete)
+
+Completed: exact/histogram estimators, optimizer-window lifecycle, local training
+integration, toy-run interpretation and optional distributed histogram pooling.
+Latest focused verification: 328 MoE/training tests passed; lint and typing passed
+for the pooling implementation and its tests. Full distributed training and exact
+global score gathering are not implemented. Next: frontier-model case studies.
+
+Toy-run interpretation: the learner's 800-step sigmoid/histogram run with four
+experts and top-2 routing maintained assignment shares near 25% per expert (about
+50% of tokens per expert), low MaxVio and near-maximal assignment entropy. Task
+loss approached zero on the fixed batch: useful balance/memorization evidence,
+not a generalization or large-scale performance claim.
+
+### Distributed histogram extension
+
+`update_quantile_bias(process_group=group)` performs an in-place SUM all-reduce of
+counts `[num_experts,num_bins]`. Pool counts, not quantile estimates: quantiles of
+individual shards cannot generally be averaged into the pooled quantile.
+Each histogram row contains one observation per token, so its pooled row sum is
+the global token count (no division by top-k and no second collective needed).
+
+The collective precedes the empty-window guard. A locally empty rank must still
+participate or peers can hang; a globally empty window safely leaves biases alone.
+All ranks use identical old biases/bin boundaries, estimate the same new bias, and
+reset their workspace. The group must contain replicas of the same router, with
+the intended token population counted once. Caller owns initialization and group
+selection. `None` deliberately means local, not the default world group.
+
+Distributed exact mode raises before changing the window: it would need global
+raw-score gathering, not an average of local quantiles. The sign-based alternative
+would instead SUM assignment counts `[num_experts]`, then apply the sign rule;
+this extension does not implement that path or distributed training-runner wiring.
+Two-rank CPU/Gloo reference tests exercise unequal and empty shards, one/multiple
+bins, successive windows and default-local behavior under an initialized group.
+
+Interview questions and corrected reasoning:
+
+- With T tokens, E experts and top-k K, equal target count is `T*K/E`, or fraction
+  `K/E` of tokens for each expert (25% for E=8/K=2).
+- A raw expert score .4 and fixed cutoff .6 require bias .2 to reach the boundary.
+  Required bias is cutoff minus RAW score, not biased score.
+- One expert has a list of required biases over tokens. A chosen bias covers the
+  tokens needing less than that bonus, so a 25% target uses the lower 25% quantile,
+  not the 75% quantile. The latter confusion came from thinking of high-score tails;
+  smaller required bias instead means easier to satisfy.
+- The quantile supplies a replacement target, not an increment to the current bias.
+  Changing all experts simultaneously changes cutoffs, so a frozen-cutoff update
+  does not guarantee perfectly equal next-batch routing. Ties also need care.
+- Mean-centering removes a common offset without changing selection: biases
+  [10.1,10.3,10.2] and [-.1,.1,0] have identical pairwise differences.
+- For top-2 with distinct scores [.9,.7,.4,.2], both `score >= .7` and `score > .4`
+  describe the winners. The learner's second-score/>= argument was valid; the
+  interviewer initially phrased this ambiguously. The algorithm specifically
+  freezes the third score, strongest rejected, with the strict-> convention.
+  These two descriptions do NOT give interchangeable bias targets. An unselected
+  expert entering exact top-k with other scores fixed must displace the kth score;
+  the shared frozen cutoff used by QB is a different construct.
+- Broadcasting needs one cutoff per token: `[T,1]` minus `[T,E]` yields `[T,E]`.
+  Quantiles reduce the token axis (`dim=0`) to return one target per expert `[E]`.
+  Without dim, quantile flattens everything; returning the mean instead of
+  subtracting it also mistakenly collapses the expert dimension.
+
+The learner's `TopKRouter.estimate_quantile_bias` implements this exact update
+under no-grad. Codex supplied the requested cutoff-operation example, reviewed,
+added short comments/docstrings, and wrote 10 tests, not the remaining algorithm.
+The method retains explicit score/bias/K inputs and does not mutate state. The
+documented initial domain is nonempty sigmoid scores and `1 <= K < E`; full
+integration must explicitly address invalid inputs, ties and all-expert routing.
+The hand-check test uses PyTorch's default linear quantile interpolation; finite
+samples and ties do not imply that a single estimate yields exactly target counts.
+
+Source: [Kimi K3 quantile balancing](https://arxiv.org/html/2607.24653v2#S2.SS3.SSS3).
+Pooled-quantile reasoning and histogram accumulation are now covered below.
+Exact buffers are O(T*E); histograms summarize distributions with per-expert counts
+and aggregate counts, not independently estimated quantiles. The sign-based
+update/forward remain unchanged. Histogram extraction is now implemented and
+tested below. At this historical estimator checkpoint, QB training-window wiring,
+bias application and distributed synchronization were not implemented; the
+completed lifecycle and optional histogram synchronization are documented above/below.
+
+### Histogram distribution reasoning and accumulation
+
+- Can we average microbatch quantiles? No: batches [0,0,0,0] and [8,8,8,8]
+  have 25% quantiles 0 and 8, whose average 4 differs from pooled quantile 0.
+- What can we sum? Histograms with identical boundaries: sum bin counts across
+  microbatches/ranks before extraction. Distributed SUM would communicate counts,
+  not independently calculated quantiles.
+- Example counts [2,5,1,2] in bins [0,1), [1,2), [2,3), [3,4] have cumulative
+  counts [2,7,8,10]. The 25% target count is 2.5, located in the second bin.
+  There are 2 counts before it and 5 inside it; uniform-within-bin interpolation
+  moves (.5/5)=.1 of its width, giving 1+.1=1.1. This does not mean half a token
+  is selected; it estimates a location in a summarized distribution.
+- Actual example values [.2,.8,1.1,1.3,1.5,1.7,1.9,2.4,3.2,3.8] produce those
+  counts. Histogram interpolation gives 1.1 versus torch.quantile's 1.15. There is
+  both within-bin information loss and a different finite-sample interpolation
+  convention (CDF target q*T versus PyTorch linear sample index q*(T-1)).
+- Since sigmoid scores lie in [0,1], biased cutoffs lie in [b_min,1+b_max].
+  Subtracting raw scores gives safe required-bias bounds [b_min-1,b_max+1], not
+  [0,1]. Freeze these bounds for all histograms intended to be added together.
+- Zero-based bins are floor((required_bias-lower_bound)/bin_width), clamped to
+  [0,num_bins-1] so the upper endpoint goes into the last bin. For range [-1,1]
+  with four bins, required bias .3 gives floor((.3+1)/.5)=2.
+- Transpose indices [T,E] to [E,T], then scatter-add integer ones into an [E,B]
+  histogram along the bin axis. Every expert receives one observation per token,
+  including experts not chosen by top-k. A row's added counts sum to T.
+
+The learner explicitly requested this part be implemented for them after finding
+the steps blurry. Codex wrote the numbered-comment `accumulate_bias_histogram`
+method and tests. After the learner explicitly requested that validation live
+elsewhere, all helper checks and their five test cases were removed. The remaining
+tests cover computation, accumulation and nonmutation. Valid shapes, int32/int64
+histograms, shared devices, positive bin count and `1 <= K < E` are now caller
+preconditions, to be checked at integration boundaries, not inside this helper.
+It updates an externally supplied integer count buffer in
+place, returns lower bound/bin width, leaves router state and inputs unchanged,
+and supports adding empty or multiple microbatches. Fixed-window bias/bin identity
+is a caller obligation; it does not silently maintain bounds or reset counters.
+Work is vectorized in FP32 (or preserved FP64), with no Python token/expert loops
+or value-dependent host synchronization. Persistent count storage is O(E*B), but
+the educational helper still materializes O(T*E) temporary margins/bin indices per
+microbatch; it is not a fused production histogram kernel.
+
+The learner subsequently completed histogram extraction as follows; full-step
+lifecycle, distributed count pooling and bias replacement remain next.
+
+### Histogram quantile extraction (learner-written, tested)
+
+The learner wrote `estimate_bias_from_histogram` in small reviewed steps:
+
+1. Cumsum over bins gives `[E,num_bins]`. The last entry of any row is T, not E.
+   The target is `T*K/E`; an initial `K/T` expression was corrected.
+2. Find the first cumulative count >= target using batched `torch.searchsorted`.
+   The scalar target expands to `[E,1]`; contiguous avoids an internal-copy warning.
+   Index outputs are `[E,1]`, including when there is only one chosen bin per row.
+3. Gather from histogram and cumsum along dim=1. Their difference is count-before,
+   which avoids indexing bin_idx-1 and special-casing bin zero. Gather preserves
+   index shape `[E,1]`, not `[E]`.
+4. Fraction within the selected bin is `(target-count_before)/bin_count`. Bin left
+   edge is `lower_bound + bin_idx*bin_width`; estimate adds fraction*width.
+5. Squeeze dim=1 to `[E]`, subtract the estimates' mean, and return new bias targets.
+
+Codex reviewed each step, supplied operation/shape guidance, then added comments
+and tests. Tests use independent scalar-loop histogram interpolation, explicit
+hand values, exact cumulative boundaries with empty gaps (left search must not
+select a zero-count plateau bin), no mutation/autograd, strided counts, expert
+permutations, shifted lower bounds and accumulated-microbatch distributions.
+No library-style input validation was reintroduced. The helper assumes equal
+positive row sums, valid K/bin width, and compatible tensors; empty global windows
+must be handled by the caller. Empty local microbatches are already supported by
+accumulation, but a globally empty histogram has no quantile to extract.
+
+Next interview topic: window lifecycle and bias-update timing, before wiring
+training/CLI or distributed collectives. Both exact and histogram estimators now
+exist. Forward accumulation is subsequently enabled explicitly, as recorded
+below; bias replacement is still not selected by training. Do not repeat the
+completed extraction or silently replace the sign-based update.
+
+Counter dtype follow-up: the learner chose int32 because counters reset every
+optimizer step, rather than accumulating over the full run. At their request
+Codex changed scatter-add source ones to `histogram.dtype`; indices remain int64.
+Int32 therefore halves persistent counter storage while int64 remains supported.
+Pooled counts per bin must fit the chosen dtype (int32 max 2,147,483,647); the
+caller owns this assumption. Cumsum promotes integer counts to int64 by default.
+There are now 30 accumulation cases including both counter dtypes, plus 17
+extraction cases including int32/int64 equivalence. The learner correctly chose
+a registered non-persistent histogram buffer: it survives microbatches and moves
+with the device, but is neither learned nor part of checkpoints. They requested
+Codex implement this repeated plumbing rather than repeat a familiar exercise.
+The initial buffer implementation used keyword-only `num_bins` with effective default 256 and zero int32 `bias_histogram`
+of shape [E,num_bins]. Positive bin-count validation lives at construction, not
+in the computation helpers. Six tests check configuration, registration,
+checkpoint omission, device/dtype tracking and isolation from forward/metric
+reset. The actual training-window lifecycle remains next. The learner clarified
+that this delegation was only for this instance to focus on quantile balancing;
+do not generalize it into a standing rule to take over repeated wiring.
+
+Forward-accumulation checkpoint (2026-10-25): the learner chose all raw scores,
+not only selected mixing weights, because every token contributes a required
+bias to every expert. They added the default-off `use_quantile_balancing` flag
+and train-only helper call. Review caught a hard-coded False field (ignoring the
+argument) and unflattened [B,S,E] input; the learner corrected both. Bias remains
+fixed during these forwards. Codex supplied requested boundary checks: enabled
+QB rejects K=E, and explicit num_bins is allowed only with QB. An omitted
+num_bins=None originally resolved to 256; the mode-selection change below supersedes it.
+Six additional tests cover conditional configuration, ordinary all-expert routing,
+both score functions, accumulated counts across forwards, matching baseline
+outputs/gradients, unchanged biases, and isolation from evaluation/metric reset.
+The later local step update below implements replacement/reset. Distributed
+pooling and model/training wiring remain next. Do not perform sign updates and
+QB replacements together.
+
+### Exact versus histogram mode and local step update (2026-10-25)
+
+The learner requested `num_bins=None` select exact QB, and a positive count select
+histogram QB, instead of keeping a seemingly stale exact method only for tests.
+The default-off use_quantile_balancing flag still controls whether QB runs at all.
+An explicit num_bins while QB is off is rejected; enabled QB requires K<E.
+Disabled/exact modes register bias_histogram=None instead of allocating bins.
+
+Exact mode cannot average microbatch quantiles. Codex therefore added a temporary
+list of detached raw score chunks [T_i,E] and concatenates it once at the step
+boundary, then calls the learner's exact estimator using the unchanged old bias.
+This uses O(T*E) on-device storage for the whole window and is intentionally a
+small-scale reference, not the scalable global method. A Python list avoids
+repeated growing tensor concatenations but does not automatically follow module
+device moves or checkpoints: complete/reset a window before those transitions.
+
+The learner's histogram update correctly recovers lower/upper bounds from the old
+bias before estimation, copies the result in place, then zeroes counts. Codex
+preserved that algorithm and supplied the exact branch and guards against empty,
+disabled or evaluation updates. The empty histogram guard reads one row total
+and synchronizes once per step; no per-microbatch host check was added. Empty
+windows must not replace biases with NaNs. Repeated update calls after reset are
+no-ops. New biases take effect on the next forward, not the batch that estimated
+them; diagnostic metrics reset is independent of both accumulation strategies.
+
+Nine tests compare complete window estimates in both modes/score functions,
+including two successive steps (fresh bounds), detached exact snapshots,
+non-checkpointed temporary state, bias buffer identity, task-gradient survival,
+empty windows, disabled/eval no-ops and reset behavior. Codex added these tests
+and requested mode wiring; the histogram-update algorithm remains learner-authored.
+This local-mode change did not add distributed raw-score gathering or histogram
+all-reduce. Model/runner forwarding was subsequently completed below.
+
+### Calling QB once per optimizer step (requested wiring)
+
+The learner identified training-loop update insertion as pure wiring and explicitly
+asked Codex to implement it. QB/bin options now traverse ModelConfig, DecoderModel,
+TransformerBlock and GroupedMoE to each TopKRouter. The toy runner calls update
+after train_step returns (backward, clipping and optimizer.step already completed),
+then records the completed step's diagnostics and resets metrics. QB reset only
+clears its own window, not diagnostic counts. The existing rate-based sign update
+is the exclusive fallback when QB is disabled. Neither strategy runs by default.
+
+The runner rejects enabling QB and a positive sign rate together; auxiliary
+balancing must also be zero when either strategy is active, matching the existing
+runner policy. This exclusivity is a controlled-experiment choice, not a universal
+claim that bias balancing and auxiliary losses cannot be combined in research.
+Softmax z-loss remains independent; sigmoid still rejects a nonzero z coefficient.
+CLI flags are --use-quantile-balancing and optional --num-bins. None selects exact
+and positive bins select histogram. History and plot tags distinguish the modes,
+preventing accidental plot overwrites between exact/histogram/sign baselines.
+
+Ten assistant-authored tests verify every layer receives configuration, updates
+occur once after each optimizer step, sign updates cannot also run, diag counts
+remain available for logging, default behavior stays off, conflicts are rejected,
+and both exact/histogram plots are saved under distinct filenames. Both sigmoid
+and softmax runs execute in timing tests. This is local CPU correctness, not
+distributed pooling, a large-scale balance guarantee or a model-quality claim.
+The later toy-run interpretation and optional histogram all-reduce extension are
+now complete (see the current checkpoint above). Do not repeat local wiring.
+
+
 ## LatentMoE: routed width versus expert intermediate width (stage 12, active)
 
 The learner implemented optional `d_latent` in `GroupedMoE`; Codex reviewed and
@@ -80,6 +334,46 @@ Default experts and the shared branch remain SwiGLU. Docstrings describe
 `softcap_betas=(beta_gate,beta_value)` as finite positive non-learned cap magnitudes;
 None selects classic SwiGLU. End-to-end model/runner configuration and distributed
 latent integration remain outside scope. Next learning topic: quantile balancing.
+
+#### Microscaling and why SiTU-GLU helps low precision
+
+Microscaling represents a tensor as small blocks of low-precision numbers plus
+one shared scale per block. Reconstruction is approximately
+`x = low_precision_value * block_scale`; quantization rounds `x / block_scale`
+to the low-precision format. The scale adapts the representable magnitude range;
+it does not change the mathematical activation or act like learned RMSNorm.
+
+Conceptual example (illustrative scales, not the scale-selection algorithm):
+
+| Stored low-precision values | Shared scale | Reconstructed values |
+|---|---:|---|
+| [1, 2, 3] | 1 | [1, 2, 3] |
+| [1, 2, 3] | 128 | [128, 256, 384] |
+
+MXFP8 uses one E8M0 power-of-two scale for each block of 32 values. The scale is
+derived from the block's maximum absolute value so its largest finite value can
+fit into the FP8 payload range. Unlike tensor-wide scaling, different blocks can
+adapt to different magnitudes. Scaling extends range but cannot restore the
+mantissa precision lost by quantization. An outlier can still force its block's
+scale upward and degrade the representation of smaller neighboring values.
+Source: [NVIDIA MXFP8 documentation](https://docs.nvidia.com/deeplearning/transformer-engine/features/low_precision_training/mxfp8/mxfp8.html).
+
+Low precision does not inherently make the real activations explode. The model's
+unbounded projections and SwiGLU multiplication produce outliers; restricted
+precision makes those outliers more problematic through quantization error,
+underflow/saturation and possible overflow in intermediate arithmetic. A suitable
+block scale mitigates payload overflow but does not guarantee stable training.
+
+The Kimi K3 paper explicitly motivates SiTU-GLU with activation-outlier and
+low-precision overflow concerns. Smooth-capping both multiplicative factors
+limits the intermediate product and helps quantization robustness, but does not
+bound the following expert projection. It is a general stability mechanism,
+particularly useful in low precision, not a complete FP8/FP4 stability solution.
+Its post-training recipe uses MXFP4 routed-expert weights and MXFP8 activations;
+non-expert components remain higher precision. This does not mean all activations
+are MXFP4, and MXFP4 should not be confused with NVIDIA's distinct NVFP4 recipe.
+Sources: [SiTU-GLU motivation, §2.3.2](https://arxiv.org/html/2607.24653v2#S2.SS3.SSS2),
+[post-training precision, §4.1.4](https://arxiv.org/html/2607.24653v2#S4.SS1.SSS4).
 
 ### Normalized LatentMoE (implemented and tested)
 
