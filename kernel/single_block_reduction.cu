@@ -1,3 +1,5 @@
+#include <cuda_runtime.h>
+
 __global__ void reduce(const float* x, float* output) {
     __shared__ float buffer[256];
 
