@@ -50,45 +50,6 @@ One explicit exception to my own implementation work is the educational
 [chunkwise KDA operator](linear_attention/chunked_kda.py): I asked Codex to
 write it as a worked example to study. The recurrent KDA implementation is mine.
 
-## Topics covered
-
-- Scaled dot-product and causal attention
-- Multi-head self-attention
-- RMSNorm
-- GELU MLPs and SwiGLU
-- Pre-norm decoder Transformer blocks
-- Learned and sinusoidal positional encodings
-- Rotary positional encoding and relative-position reasoning
-- RoPE integration and sequence offsets
-- A complete decoder-only language model
-- Weight tying and shifted next-token loss
-- Stable cross-entropy with ignored targets
-- Basic training steps, AdamW, clipping, and gradient accumulation
-- KV caching across prefill and autoregressive decoding
-- Cached versus full-sequence decoder equivalence
-- Multi-query attention (MQA) and grouped-query attention (GQA)
-- Compact KV caches with separate query-head and KV-head counts
-- Byte-level BPE training, encoding, and UTF-8 decoding
-- Unicode-aware regex pre-tokenization and protected special tokens
-- Portable tokenizer serialization and reconstruction
-- Naive and KV-cached greedy generation
-- Temperature, top-k, and top-p sampling
-- Batched EOS handling and reproducible sampling
-- Sign-aware repetition penalties
-- Reference speculative sampling with exact rejection correction
-- Batched speculative decoding with independent draft and target KV caches
-- Cache rollback, synchronized batch progress, and EOS handling during
-  speculative decoding
-- Causal sliding-window attention and bounded decoding caches
-- Recurrent linear attention, DeltaNet, gated DeltaNet, and Kimi Delta Attention
-- Full KDA layer with short convolutions, learned gates, and fixed-size cache
-- Educational chunkwise KDA (AI-authored worked example)
-- MoE routing, grouped experts, capacity policies, shared experts and balancing
-- Educational expert-parallel forward/backward with two-rank reference tests
-- LatentMoE, SiTU-GLU, and exact/histogram quantile balancing
-- MoE architecture synthesis: compute, communication and numerical tradeoffs
-- Vectorized K-means prediction as a separate classical-ML warmup
-
 ## Current checkpoint
 
 The main decoder path is complete through cached, batched speculative decoding.
