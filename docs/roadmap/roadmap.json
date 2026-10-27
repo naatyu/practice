@@ -1,0 +1,365 @@
+{
+  "reviewed": "2026-10-27",
+  "lanes": [
+    {
+      "id": "model",
+      "title": "Build the model",
+      "subtitle": "From tensors to a trainable decoder",
+      "color": "#7ddbd0",
+      "topics": [
+        {
+          "id": "attention",
+          "title": "Causal attention",
+          "label": ["Causal", "attention"],
+          "status": "complete",
+          "caption": "Q · Kᵀ → softmax → V",
+          "description": "Scaled dot-product attention, causal masking, multi-head projections, and reference tests.",
+          "links": [
+            ["Exercises", "attention/README.md"],
+            ["Multi-head attention", "multi_head_attention/README.md"]
+          ]
+        },
+        {
+          "id": "norms-mlps",
+          "title": "Norms & MLPs",
+          "label": ["Norms", "& MLPs"],
+          "status": "complete",
+          "caption": "RMSNorm · GELU · SwiGLU",
+          "description": "Implement normalization and position-wise feed-forward networks; reason about gating and parameter-matched widths.",
+          "links": [
+            ["Normalization", "normalization/README.md"],
+            ["Feed-forward layers", "mlp/README.md"]
+          ]
+        },
+        {
+          "id": "positions",
+          "title": "Position encodings",
+          "label": ["Position", "encodings"],
+          "status": "complete",
+          "caption": "Absolute → relative → RoPE",
+          "description": "Learned and sinusoidal positions, rotary embeddings, relative-position reasoning, and offsets for cached decoding.",
+          "links": [["Exercises & notes", "positional_encoding/README.md"]]
+        },
+        {
+          "id": "decoder",
+          "title": "Transformer decoder",
+          "label": ["Transformer", "decoder"],
+          "status": "complete",
+          "caption": "Blocks · residuals · tied weights",
+          "description": "Assemble pre-norm Transformer blocks into a decoder-only model, including final normalization and the vocabulary head.",
+          "links": [
+            ["Transformer block", "transformer_block/README.md"],
+            ["Decoder", "decoder_model/README.md"]
+          ]
+        },
+        {
+          "id": "cross-entropy",
+          "title": "Stable cross-entropy",
+          "label": ["Stable", "cross-entropy"],
+          "status": "complete",
+          "caption": "Log-sum-exp · masks · gradients",
+          "description": "Compute next-token loss directly from logits, handle ignored targets and reductions, and compare values and gradients with PyTorch.",
+          "links": [["Exercises & notes", "cross_entropy/README.md"]]
+        },
+        {
+          "id": "training",
+          "title": "Train a decoder",
+          "label": ["Train", "a decoder"],
+          "status": "complete",
+          "caption": "AdamW · accumulation · clipping",
+          "description": "Build the basic training step, accumulate gradients, clip them, and overfit a tiny batch as an end-to-end correctness check.",
+          "links": [["Training", "training/README.md"]]
+        }
+      ]
+    },
+    {
+      "id": "generation",
+      "title": "Make it generate",
+      "subtitle": "Tokens in. Useful continuations out.",
+      "color": "#8fb6f3",
+      "topics": [
+        {
+          "id": "bpe",
+          "title": "Byte-level BPE",
+          "label": ["Byte-level", "BPE"],
+          "status": "complete",
+          "caption": "Bytes · merges · special tokens",
+          "description": "Train a tokenizer, encode and decode Unicode through bytes, protect special tokens, and serialize its state.",
+          "links": [["Tokenizer", "bpe/README.md"]]
+        },
+        {
+          "id": "kv-cache",
+          "title": "KV caching",
+          "label": ["KV", "caching"],
+          "status": "complete",
+          "caption": "Prefill → incremental decode",
+          "description": "Reuse keys and values across generation steps, maintain absolute positions, and test cached versus full-sequence equivalence.",
+          "links": [["KV cache", "kv_cache/README.md"]]
+        },
+        {
+          "id": "gqa",
+          "title": "MQA & GQA",
+          "label": ["MQA", "& GQA"],
+          "status": "complete",
+          "caption": "Fewer KV heads, smaller cache",
+          "description": "Separate query-head and KV-head counts and implement compact grouped attention without expanding the stored cache.",
+          "links": [["Attention variants", "multi_head_attention/README.md"]]
+        },
+        {
+          "id": "sampling",
+          "title": "Greedy & sampling",
+          "label": ["Greedy", "& sampling"],
+          "status": "complete",
+          "caption": "Temperature · top-k · top-p",
+          "description": "Generate batched sequences, sample from filtered probabilities, handle EOS, and preserve reproducibility.",
+          "links": [["Generation", "generation/README.md"]]
+        },
+        {
+          "id": "speculative",
+          "title": "Speculative decoding",
+          "label": ["Speculative", "decoding"],
+          "status": "complete",
+          "caption": "Draft · verify · accept/reject",
+          "description": "Implement distribution-preserving speculative sampling, independent model caches, batched verification, and rollback.",
+          "links": [["Generation notes", "generation/SOLUTIONS.md"]]
+        },
+        {
+          "id": "serving",
+          "title": "Efficient inference",
+          "label": ["Efficient", "inference"],
+          "status": "planned",
+          "caption": "Paged KV · batching · prefixes",
+          "description": "Explore continuous batching, paged caches, prefix reuse, and decode-time memory-bandwidth bottlenecks. Not yet a completed exercise.",
+          "links": [["Detailed plan", "ROADMAP.md#22-efficient-inference"]]
+        }
+      ]
+    },
+    {
+      "id": "attention-designs",
+      "title": "Rethink attention",
+      "subtitle": "Change the memory, not just the mask",
+      "color": "#b8a5ec",
+      "topics": [
+        {
+          "id": "local",
+          "title": "Sliding-window attention",
+          "label": ["Sliding-window", "attention"],
+          "status": "complete",
+          "caption": "Local windows · bounded cache",
+          "description": "Move from a dense local mask to compact window computation, with bounded-cache eviction and absolute positions.",
+          "links": [["Attention exercises", "attention/README.md"]]
+        },
+        {
+          "id": "delta",
+          "title": "Linear → DeltaNet",
+          "label": ["Linear", "→ DeltaNet"],
+          "status": "complete",
+          "caption": "State · retrieval · correction",
+          "description": "Build recurrent linear attention, error-correcting state updates, and scalar-gated forgetting before channel-wise KDA.",
+          "links": [["Linear attention", "linear_attention/README.md"]]
+        },
+        {
+          "id": "kda",
+          "title": "Kimi Delta Attention",
+          "label": ["Kimi Delta", "Attention"],
+          "status": "complete",
+          "caption": "Convolutions · gates · chunks",
+          "description": "Full educational KDA with recurrent and convolution caches, low-rank projections, per-head rates, and a tested chunkwise worked example.",
+          "scope": "The recurrent layer is learner-written. Chunkwise code and learning visuals are explicitly AI-authored.",
+          "links": [
+            ["KDA exercises", "linear_attention/README.md"],
+            ["Worked example", "linear_attention/chunked_kda.py"]
+          ]
+        },
+        {
+          "id": "mla",
+          "title": "Latent attention",
+          "label": ["Latent", "attention"],
+          "status": "in-progress",
+          "caption": "MLA · exploratory implementation",
+          "description": "Explore compressed KV states, decoupled RoPE dimensions, and inference weight absorption.",
+          "scope": "Work in progress: public API, correctness/cache tests, and absorbed-path verification are not complete.",
+          "links": [["Current implementation", "multi_head_attention/mla.py"]]
+        },
+        {
+          "id": "yarn",
+          "title": "Long-context RoPE",
+          "label": ["Long-context", "RoPE / YaRN"],
+          "status": "planned",
+          "next": true,
+          "caption": "Interpolation vs. extrapolation",
+          "description": "Study RoPE extension, frequency-dependent scaling, YaRN, and the effect on original and extended context lengths.",
+          "links": [
+            [
+              "Detailed plan",
+              "ROADMAP.md#18-long-context-rope-scaling-and-yarn"
+            ]
+          ]
+        },
+        {
+          "id": "flash",
+          "title": "FlashAttention",
+          "label": ["Flash", "Attention"],
+          "status": "deferred",
+          "next": true,
+          "caption": "Theory done · code deferred",
+          "description": "Online softmax and tiled attention reasoning are documented. The plain-PyTorch implementation remains intentionally deferred.",
+          "scope": "Theory complete is not the same as implementation complete.",
+          "links": [["Theory & exercise", "flash_attention/README.md"]]
+        }
+      ]
+    },
+    {
+      "id": "systems",
+      "title": "Scale the compute",
+      "subtitle": "Sparse work, real hardware constraints",
+      "color": "#edbd7b",
+      "topics": [
+        {
+          "id": "moe",
+          "title": "Mixture of Experts",
+          "label": ["Mixture", "of Experts"],
+          "status": "complete",
+          "caption": "Route · dispatch · combine",
+          "description": "Naive, batched and grouped experts; capacity, diagnostics, auxiliary/z losses, shared experts, and bias-based balancing.",
+          "scope": "All 14 MoE stages are complete for educational scope, not a production-model reproduction.",
+          "links": [["MoE learning track", "moe/README.md"]]
+        },
+        {
+          "id": "ep",
+          "title": "Expert parallelism",
+          "label": ["Expert", "parallelism"],
+          "status": "complete",
+          "caption": "All-to-all · forward / backward",
+          "description": "Two-rank CPU/Gloo dispatch and return, with output/gradient parity and empty-rank regression tests.",
+          "scope": "The separate commented backward example is AI-authored teaching code. No full distributed decoder trainer or multi-GPU speedup is claimed.",
+          "links": [
+            ["EP forward", "moe/expert_parallel.py"],
+            ["Notes & scope", "moe/SOLUTIONS.md"]
+          ]
+        },
+        {
+          "id": "latent-moe",
+          "title": "LatentMoE & balancing",
+          "label": ["LatentMoE", "& balancing"],
+          "status": "complete",
+          "caption": "SiTU-GLU · exact / histogram QB",
+          "description": "Latent routed projections, post-combination normalization, SiTU-GLU, quantile bias updates, local training integration, and distributed histogram pooling.",
+          "scope": "Latent/SiTU decoder forwarding, distributed exact gathering, and full distributed runner integration remain optional extensions.",
+          "links": [["MoE stages & scope", "moe/README.md"]]
+        },
+        {
+          "id": "accounting",
+          "title": "FLOPs & memory",
+          "label": ["FLOPs", "& memory"],
+          "status": "planned",
+          "next": true,
+          "caption": "Layer by layer, then end to end",
+          "description": "Extend the completed MoE accounting to every layer: parameters, training states, activations, cache memory, arithmetic intensity, and profiler comparisons.",
+          "scope": "MoE-specific accounting is already covered; this is the broader decoder-wide exercise.",
+          "links": [
+            [
+              "Detailed plan",
+              "ROADMAP.md#17-flop-parameter-and-memory-accounting"
+            ]
+          ]
+        },
+        {
+          "id": "precision",
+          "title": "Precision & quantization",
+          "label": ["Precision", "& quantization"],
+          "status": "planned",
+          "caption": "BF16 / FP16 → INT8 / INT4",
+          "description": "Dedicated exercises on mixed precision, loss scaling, accumulation, quantization scales, GPTQ/AWQ concepts, and cache quantization.",
+          "scope": "Some precision topics appeared in earlier exercises; the dedicated track remains planned.",
+          "links": [
+            [
+              "Precision",
+              "ROADMAP.md#19-mixed-precision-and-numerical-stability"
+            ],
+            ["Quantization", "ROADMAP.md#20-quantization"]
+          ]
+        },
+        {
+          "id": "distributed",
+          "title": "Distributed systems",
+          "label": ["Distributed", "systems"],
+          "status": "planned",
+          "caption": "DP · TP · PP · FSDP",
+          "description": "Expand beyond educational EP to data, tensor, pipeline, sequence/context parallelism and sharded training states.",
+          "links": [["Detailed plan", "ROADMAP.md#21-distributed-training"]]
+        }
+      ]
+    },
+    {
+      "id": "adaptation",
+      "title": "Train & adapt",
+      "subtitle": "Make learning itself the next exercise",
+      "color": "#e69da7",
+      "topics": [
+        {
+          "id": "evaluation",
+          "title": "Training & evaluation",
+          "label": ["Training", "& evaluation"],
+          "status": "planned",
+          "caption": "Schedules · checkpoints · metrics",
+          "description": "Extend the basic training loop with schedules, initialization recipes, optimizer/RNG checkpoints, perplexity, masks and evaluation design.",
+          "links": [
+            ["Detailed plan", "ROADMAP.md#26-extended-training-and-evaluation"]
+          ]
+        },
+        {
+          "id": "finetuning",
+          "title": "Fine-tuning",
+          "label": ["Fine", "tuning"],
+          "status": "planned",
+          "caption": "LoRA · QLoRA · SFT",
+          "description": "Implement parameter-efficient adaptation, supervised fine-tuning, and the foundations of preference optimization.",
+          "links": [["Detailed plan", "ROADMAP.md#24-fine-tuning"]]
+        },
+        {
+          "id": "ppo",
+          "title": "PPO",
+          "label": ["PPO"],
+          "status": "planned",
+          "caption": "Rollouts · advantages · clipping",
+          "description": "Build post-training from token log-probabilities and rewards through KL control, GAE, value learning, and clipped policy updates.",
+          "links": [
+            [
+              "Post-training plan",
+              "ROADMAP.md#25-reinforcement-learning-post-training"
+            ]
+          ]
+        },
+        {
+          "id": "grpo",
+          "title": "GRPO",
+          "label": ["GRPO"],
+          "status": "planned",
+          "caption": "Groups · relative rewards · KL",
+          "description": "Sample groups of completions, form group-relative advantages, and compare the memory, stability and reward tradeoffs with PPO.",
+          "links": [
+            [
+              "Post-training plan",
+              "ROADMAP.md#25-reinforcement-learning-post-training"
+            ]
+          ]
+        },
+        {
+          "id": "autograd",
+          "title": "A small autograd engine",
+          "label": ["A small", "autograd engine"],
+          "status": "planned",
+          "caption": "Build the chain rule yourself",
+          "description": "Write a scalar reverse-mode engine, accumulate gradients through branching graphs, then optionally extend to tensor operations.",
+          "links": [
+            [
+              "Exercise & references",
+              "ROADMAP.md#27-build-a-small-autograd-engine"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -9,6 +9,20 @@ The point is not to build another production framework. It is to implement the
 important pieces myself, understand the math behind them, reason about tensor
 shapes and numerical stability, and be able to explain the tradeoffs.
 
+<!-- roadmap:start -->
+<!-- Edit docs/roadmap/roadmap.json, then run: uv run python docs/roadmap/build.py -->
+
+## Learning roadmap
+
+<picture>
+  <source media="(max-width: 767px) and (prefers-color-scheme: dark)" srcset="docs/roadmap/roadmap-dark-mobile.svg">
+  <source media="(max-width: 767px)" srcset="docs/roadmap/roadmap-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/roadmap/roadmap-dark.svg">
+  <img src="docs/roadmap/roadmap-light.svg" width="880" alt="Five learning tracks: model foundations and core generation are complete; attention includes exploratory MLA and deferred FlashAttention; systems and adaptation include planned work. See the detailed roadmap for scope and prerequisites.">
+</picture>
+
+<!-- roadmap:end -->
+
 ## How I use the repository
 
 Each topic starts as a focused implementation problem, such as causal attention

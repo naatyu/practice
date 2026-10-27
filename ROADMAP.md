@@ -1,5 +1,10 @@
 # LLM interview practice roadmap
 
+The [README learning map](README.md#learning-roadmap) is the visual overview;
+this file keeps the detailed exercises and scope. When a topic's status changes,
+also update `docs/roadmap/roadmap.json` and run
+`uv run python docs/roadmap/build.py` to refresh both README themes.
+
 ## Current checkpoint
 
 Completed through cached, batched speculative decoding. FlashAttention theory

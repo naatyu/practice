@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="1706" viewBox="0 0 400 1706" role="img" aria-labelledby="map-title map-desc">
+<title id="map-title">LLM implementation learning roadmap</title>
+<desc id="map-desc">Build the model: Causal attention (Complete), Norms &amp; MLPs (Complete), Position encodings (Complete), Transformer decoder (Complete), Stable cross-entropy (Complete), Train a decoder (Complete); Make it generate: Byte-level BPE (Complete), KV caching (Complete), MQA &amp; GQA (Complete), Greedy &amp; sampling (Complete), Speculative decoding (Complete), Efficient inference (Planned); Rethink attention: Sliding-window attention (Complete), Linear → DeltaNet (Complete), Kimi Delta Attention (Complete), Latent attention (In progress), Long-context RoPE (Planned), FlashAttention (Deferred); Scale the compute: Mixture of Experts (Complete), Expert parallelism (Complete), LatentMoE &amp; balancing (Complete), FLOPs &amp; memory (Planned), Precision &amp; quantization (Planned), Distributed systems (Planned); Train &amp; adapt: Training &amp; evaluation (Planned), Fine-tuning (Planned), PPO (Planned), GRPO (Planned), A small autograd engine (Planned). Tracks group topics, not strict prerequisites.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#e6edf3}.lane{font-size:19px;font-weight:600}.topic{font-size:16px;font-weight:500}.status{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;letter-spacing:.4px;fill:#9da7b3}</style>
+<text x="0" y="20" class="lane" >Build the model</text>
+<path d="M22 56 H200" fill="none" stroke="#79d9c9" stroke-width="1.5" opacity=".65"/>
+<g data-topic="attention"><title>Causal attention: Complete</title>
+<circle cx="12" cy="56" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M9 56 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="83" class="topic" >Causal</text>
+<text x="6" y="102" class="topic" >attention</text>
+<text x="6" y="124" class="status" >COMPLETE</text>
+</g>
+<g data-topic="norms-mlps"><title>Norms &amp; MLPs: Complete</title>
+<circle cx="210" cy="56" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M207 56 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="83" class="topic" >Norms</text>
+<text x="204" y="102" class="topic" >&amp; MLPs</text>
+<text x="204" y="124" class="status" >COMPLETE</text>
+</g>
+<path d="M22 150 H200" fill="none" stroke="#79d9c9" stroke-width="1.5" opacity=".65"/>
+<g data-topic="positions"><title>Position encodings: Complete</title>
+<circle cx="12" cy="150" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M9 150 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="177" class="topic" >Position</text>
+<text x="6" y="196" class="topic" >encodings</text>
+<text x="6" y="218" class="status" >COMPLETE</text>
+</g>
+<g data-topic="decoder"><title>Transformer decoder: Complete</title>
+<circle cx="210" cy="150" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M207 150 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="177" class="topic" >Transformer</text>
+<text x="204" y="196" class="topic" >decoder</text>
+<text x="204" y="218" class="status" >COMPLETE</text>
+</g>
+<path d="M22 244 H200" fill="none" stroke="#79d9c9" stroke-width="1.5" opacity=".65"/>
+<g data-topic="cross-entropy"><title>Stable cross-entropy: Complete</title>
+<circle cx="12" cy="244" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M9 244 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="271" class="topic" >Stable</text>
+<text x="6" y="290" class="topic" >cross-entropy</text>
+<text x="6" y="312" class="status" >COMPLETE</text>
+</g>
+<g data-topic="training"><title>Train a decoder: Complete</title>
+<circle cx="210" cy="244" r="6" fill="#79d9c9" stroke="#79d9c9" stroke-width="1.8"/><path d="M207 244 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="271" class="topic" >Train</text>
+<text x="204" y="290" class="topic" >a decoder</text>
+<text x="204" y="312" class="status" >COMPLETE</text>
+</g>
+<text x="0" y="358" class="lane" >Make it generate</text>
+<path d="M22 394 H200" fill="none" stroke="#8bb8f5" stroke-width="1.5" opacity=".65"/>
+<g data-topic="bpe"><title>Byte-level BPE: Complete</title>
+<circle cx="12" cy="394" r="6" fill="#8bb8f5" stroke="#8bb8f5" stroke-width="1.8"/><path d="M9 394 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="421" class="topic" >Byte-level</text>
+<text x="6" y="440" class="topic" >BPE</text>
+<text x="6" y="462" class="status" >COMPLETE</text>
+</g>
+<g data-topic="kv-cache"><title>KV caching: Complete</title>
+<circle cx="210" cy="394" r="6" fill="#8bb8f5" stroke="#8bb8f5" stroke-width="1.8"/><path d="M207 394 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="421" class="topic" >KV</text>
+<text x="204" y="440" class="topic" >caching</text>
+<text x="204" y="462" class="status" >COMPLETE</text>
+</g>
+<path d="M22 488 H200" fill="none" stroke="#8bb8f5" stroke-width="1.5" opacity=".65"/>
+<g data-topic="gqa"><title>MQA &amp; GQA: Complete</title>
+<circle cx="12" cy="488" r="6" fill="#8bb8f5" stroke="#8bb8f5" stroke-width="1.8"/><path d="M9 488 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="515" class="topic" >MQA</text>
+<text x="6" y="534" class="topic" >&amp; GQA</text>
+<text x="6" y="556" class="status" >COMPLETE</text>
+</g>
+<g data-topic="sampling"><title>Greedy &amp; sampling: Complete</title>
+<circle cx="210" cy="488" r="6" fill="#8bb8f5" stroke="#8bb8f5" stroke-width="1.8"/><path d="M207 488 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="515" class="topic" >Greedy</text>
+<text x="204" y="534" class="topic" >&amp; sampling</text>
+<text x="204" y="556" class="status" >COMPLETE</text>
+</g>
+<path d="M22 582 H200" fill="none" stroke="#8bb8f5" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="speculative"><title>Speculative decoding: Complete</title>
+<circle cx="12" cy="582" r="6" fill="#8bb8f5" stroke="#8bb8f5" stroke-width="1.8"/><path d="M9 582 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="609" class="topic" >Speculative</text>
+<text x="6" y="628" class="topic" >decoding</text>
+<text x="6" y="650" class="status" >COMPLETE</text>
+</g>
+<g data-topic="serving"><title>Efficient inference: Planned</title>
+<circle cx="210" cy="582" r="6" fill="none" stroke="#8bb8f5" stroke-width="1.8"/>
+<text x="204" y="609" class="topic" >Efficient</text>
+<text x="204" y="628" class="topic" >inference</text>
+<text x="204" y="650" class="status" >PLANNED</text>
+</g>
+<text x="0" y="696" class="lane" >Rethink attention</text>
+<path d="M22 732 H200" fill="none" stroke="#baa7ed" stroke-width="1.5" opacity=".65"/>
+<g data-topic="local"><title>Sliding-window attention: Complete</title>
+<circle cx="12" cy="732" r="6" fill="#baa7ed" stroke="#baa7ed" stroke-width="1.8"/><path d="M9 732 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="759" class="topic" >Sliding-window</text>
+<text x="6" y="778" class="topic" >attention</text>
+<text x="6" y="800" class="status" >COMPLETE</text>
+</g>
+<g data-topic="delta"><title>Linear → DeltaNet: Complete</title>
+<circle cx="210" cy="732" r="6" fill="#baa7ed" stroke="#baa7ed" stroke-width="1.8"/><path d="M207 732 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="759" class="topic" >Linear</text>
+<text x="204" y="778" class="topic" >→ DeltaNet</text>
+<text x="204" y="800" class="status" >COMPLETE</text>
+</g>
+<path d="M22 826 H200" fill="none" stroke="#baa7ed" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="kda"><title>Kimi Delta Attention: Complete</title>
+<circle cx="12" cy="826" r="6" fill="#baa7ed" stroke="#baa7ed" stroke-width="1.8"/><path d="M9 826 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="853" class="topic" >Kimi Delta</text>
+<text x="6" y="872" class="topic" >Attention</text>
+<text x="6" y="894" class="status" >COMPLETE</text>
+</g>
+<g data-topic="mla"><title>Latent attention: In progress</title>
+<path d="M210 818 l8 8 l-8 8 l-8 -8 Z" fill="none" stroke="#baa7ed" stroke-width="1.8"/>
+<text x="204" y="853" class="topic" >Latent</text>
+<text x="204" y="872" class="topic" >attention</text>
+<text x="204" y="894" class="status" >IN PROGRESS</text>
+</g>
+<path d="M22 920 H200" fill="none" stroke="#baa7ed" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="yarn"><title>Long-context RoPE: Planned</title>
+<circle cx="12" cy="920" r="6" fill="none" stroke="#baa7ed" stroke-width="1.8"/>
+<text x="6" y="947" class="topic" >Long-context</text>
+<text x="6" y="966" class="topic" >RoPE / YaRN</text>
+<text x="6" y="988" class="status" >NEXT OPTION</text>
+</g>
+<g data-topic="flash"><title>FlashAttention: Deferred</title>
+<circle cx="210" cy="920" r="6" fill="none" stroke="#baa7ed" stroke-width="1.5"/><path d="M208 917 v6 M212 917 v6" stroke="#baa7ed" stroke-width="1.3"/>
+<text x="204" y="947" class="topic" >Flash</text>
+<text x="204" y="966" class="topic" >Attention</text>
+<text x="204" y="988" class="status" >THEORY DONE</text>
+</g>
+<text x="0" y="1034" class="lane" >Scale the compute</text>
+<path d="M22 1070 H200" fill="none" stroke="#e7b875" stroke-width="1.5" opacity=".65"/>
+<g data-topic="moe"><title>Mixture of Experts: Complete</title>
+<circle cx="12" cy="1070" r="6" fill="#e7b875" stroke="#e7b875" stroke-width="1.8"/><path d="M9 1070 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="1097" class="topic" >Mixture</text>
+<text x="6" y="1116" class="topic" >of Experts</text>
+<text x="6" y="1138" class="status" >COMPLETE</text>
+</g>
+<g data-topic="ep"><title>Expert parallelism: Complete</title>
+<circle cx="210" cy="1070" r="6" fill="#e7b875" stroke="#e7b875" stroke-width="1.8"/><path d="M207 1070 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="204" y="1097" class="topic" >Expert</text>
+<text x="204" y="1116" class="topic" >parallelism</text>
+<text x="204" y="1138" class="status" >COMPLETE</text>
+</g>
+<path d="M22 1164 H200" fill="none" stroke="#e7b875" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="latent-moe"><title>LatentMoE &amp; balancing: Complete</title>
+<circle cx="12" cy="1164" r="6" fill="#e7b875" stroke="#e7b875" stroke-width="1.8"/><path d="M9 1164 l2 2 l4 -4" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="6" y="1191" class="topic" >LatentMoE</text>
+<text x="6" y="1210" class="topic" >&amp; balancing</text>
+<text x="6" y="1232" class="status" >COMPLETE</text>
+</g>
+<g data-topic="accounting"><title>FLOPs &amp; memory: Planned</title>
+<circle cx="210" cy="1164" r="6" fill="none" stroke="#e7b875" stroke-width="1.8"/>
+<text x="204" y="1191" class="topic" >FLOPs</text>
+<text x="204" y="1210" class="topic" >&amp; memory</text>
+<text x="204" y="1232" class="status" >NEXT OPTION</text>
+</g>
+<path d="M22 1258 H200" fill="none" stroke="#e7b875" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="precision"><title>Precision &amp; quantization: Planned</title>
+<circle cx="12" cy="1258" r="6" fill="none" stroke="#e7b875" stroke-width="1.8"/>
+<text x="6" y="1285" class="topic" >Precision</text>
+<text x="6" y="1304" class="topic" >&amp; quantization</text>
+<text x="6" y="1326" class="status" >PLANNED</text>
+</g>
+<g data-topic="distributed"><title>Distributed systems: Planned</title>
+<circle cx="210" cy="1258" r="6" fill="none" stroke="#e7b875" stroke-width="1.8"/>
+<text x="204" y="1285" class="topic" >Distributed</text>
+<text x="204" y="1304" class="topic" >systems</text>
+<text x="204" y="1326" class="status" >PLANNED</text>
+</g>
+<text x="0" y="1372" class="lane" >Train &amp; adapt</text>
+<path d="M22 1408 H200" fill="none" stroke="#e59cac" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="evaluation"><title>Training &amp; evaluation: Planned</title>
+<circle cx="12" cy="1408" r="6" fill="none" stroke="#e59cac" stroke-width="1.8"/>
+<text x="6" y="1435" class="topic" >Training</text>
+<text x="6" y="1454" class="topic" >&amp; evaluation</text>
+<text x="6" y="1476" class="status" >PLANNED</text>
+</g>
+<g data-topic="finetuning"><title>Fine-tuning: Planned</title>
+<circle cx="210" cy="1408" r="6" fill="none" stroke="#e59cac" stroke-width="1.8"/>
+<text x="204" y="1435" class="topic" >Fine</text>
+<text x="204" y="1454" class="topic" >tuning</text>
+<text x="204" y="1476" class="status" >PLANNED</text>
+</g>
+<path d="M22 1502 H200" fill="none" stroke="#e59cac" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
+<g data-topic="ppo"><title>PPO: Planned</title>
+<circle cx="12" cy="1502" r="6" fill="none" stroke="#e59cac" stroke-width="1.8"/>
+<text x="6" y="1529" class="topic" >PPO</text>
+<text x="6" y="1570" class="status" >PLANNED</text>
+</g>
+<g data-topic="grpo"><title>GRPO: Planned</title>
+<circle cx="210" cy="1502" r="6" fill="none" stroke="#e59cac" stroke-width="1.8"/>
+<text x="204" y="1529" class="topic" >GRPO</text>
+<text x="204" y="1570" class="status" >PLANNED</text>
+</g>
+<g data-topic="autograd"><title>A small autograd engine: Planned</title>
+<circle cx="12" cy="1596" r="6" fill="none" stroke="#e59cac" stroke-width="1.8"/>
+<text x="6" y="1623" class="topic" >A small</text>
+<text x="6" y="1642" class="topic" >autograd engine</text>
+<text x="6" y="1664" class="status" >PLANNED</text>
+</g>
+</svg>
