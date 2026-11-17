@@ -1,5 +1,5 @@
 {
-  "reviewed": "2026-10-27",
+  "reviewed": "2026-11-16",
   "lanes": [
     {
       "id": "model",
@@ -297,6 +297,16 @@
       "subtitle": "Make learning itself the next exercise",
       "color": "#e69da7",
       "topics": [
+        {
+          "id": "activation-checkpointing",
+          "title": "Activation checkpointing",
+          "label": ["Activation", "checkpointing"],
+          "status": "planned",
+          "caption": "Saved activations vs. recomputation",
+          "description": "Checkpoint Transformer blocks, preserve dropout RNG behavior, verify output/gradient parity, and measure the memory/runtime tradeoff. Protect MoE metrics and other mutable state from duplicate updates during recomputation.",
+          "scope": "Training-memory optimization, not model/optimizer checkpoint files. Start after activation accounting and mixed precision, before distributed composition.",
+          "links": [["Exercise plan", "ROADMAP.md#activation-checkpointing"]]
+        },
         {
           "id": "evaluation",
           "title": "Training & evaluation",

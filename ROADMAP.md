@@ -289,6 +289,28 @@ written; the implementation file remains intentionally empty.
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
 
+#### Activation checkpointing
+
+Learn this after activation-memory accounting and mixed precision, before
+composing it with distributed training. This is recomputation during backward,
+not saving model/optimizer checkpoints to disk.
+
+- Which intermediate activations autograd saves and what can be recomputed
+- Memory saved versus extra forward computation during backward
+- Checkpoint one Transformer block with `torch.utils.checkpoint` and explicit
+  `use_reentrant=False`, then compare per-block and selective policies
+- Preserve RNG behavior for dropout and check output/gradient parity with a
+  fixed-seed non-checkpointed reference
+- Keep recomputation from double-updating MoE routing metrics, quantile windows,
+  or other mutable forward state; do not mutate inference KV caches in this path
+- Measure peak allocated GPU memory and step time after warmup; vary sequence
+  length and the number of checkpointed blocks
+- Later: interaction with compilation and FSDP parameter gathering; activation
+  offloading is a separate optional extension
+
+References: [PyTorch checkpoint API](https://docs.pytorch.org/docs/main/utils/checkpoint.html)
+and [TorchTitan](https://github.com/pytorch/torchtitan) for larger training-system context.
+
 ### 20. Quantization
 
 - Weight-only versus weight-and-activation quantization
