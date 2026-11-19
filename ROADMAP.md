@@ -57,8 +57,9 @@ MoE stages 1–14 are complete for educational scope. Distributed exact-score ga
 distributed training-runner integration, and decoder/training forwarding of
 LatentMoE/SiTU options remain outside the implemented scope.
 See `moe/README.md`.
-Broader layer-by-layer FLOP/memory accounting and YaRN remain subsequent topics; FlashAttention's
-implementation remains deferred.
+The infrastructure track starts with decoder profiling and training memory, then
+moves into resumable training, native PyTorch parallelism and serving.
+YaRN remains a separate exercise. FlashAttention implementation is deferred.
 Multi-Head Latent Attention is exploratory work in progress, not a
 completed, tested roadmap stage.
 
@@ -265,6 +266,12 @@ written; the implementation file remains intentionally empty.
 - Arithmetic intensity, memory bandwidth, and why equal FLOPs can have
   different runtimes
 - Comparing hand calculations with profiler-reported operator FLOPs
+- Profile one complete decoder training step after warmup. Measure valid
+  tokens/s, peak allocated and reserved GPU memory, and time in data loading,
+  forward, backward, and optimizer work.
+- Estimate activation, parameter, gradient, and optimizer-state bytes separately.
+  Use a trace to identify a bottleneck and explain which measurement would
+  confirm it. Keep shape, dtype, and workload fixed when comparing changes.
 
 ### 18. Long-context RoPE scaling and YaRN
 
@@ -281,6 +288,9 @@ written; the implementation file remains intentionally empty.
 
 ## Systems and scaling
 
+The [infrastructure survey](docs/infra-survey/README.md) connects these exercises
+to job postings and model systems reports.
+
 ### 19. Mixed precision and numerical stability
 
 - FP32, FP16, and BF16
@@ -288,6 +298,8 @@ written; the implementation file remains intentionally empty.
 - Accumulation precision
 - Stable softmax and normalization
 - Hardware-friendly matrix dimensions
+- Establish a BF16 training baseline. Compare memory, step time, and numerical
+  behavior with FP32 using the same batch and sequence lengths.
 
 #### Activation checkpointing
 
@@ -318,22 +330,88 @@ and [TorchTitan](https://github.com/pytorch/torchtitan) for larger training-syst
 - INT8 and INT4
 - GPTQ and AWQ concepts
 - KV-cache quantization
+- Implement block-scaled quantization and dequantization. Measure error, bytes
+  moved, and throughput separately. Test outliers, zero blocks, and tails.
+- Use supported kernels for throughput comparisons on Ada. Use a software
+  reference for newer formats and measure native FP4 on supporting hardware.
 
 ### 21. Distributed training
 
-- Data parallelism
-- Tensor parallelism
-- Pipeline parallelism
-- Sequence and context parallelism
-- ZeRO and FSDP
-- Computation and communication costs
+#### Training data and exact resume
+
+Build this after the single-device training-memory exercise.
+
+- Stream deterministic token shards with document-aware packing. Measure
+  dataloader stalls, then try pinned memory and prefetching.
+- Save model, optimizer, scheduler, RNG, and sampler state at an optimizer-step
+  boundary. Interrupt and resume a run, then compare the next batches and
+  updates against an uninterrupted reference. Measure checkpoint stalls.
+
+#### Native PyTorch parallelism
+
+1. **DDP.** Run the same decoder on two CPU/Gloo ranks with distinct batches
+   using `DistributedDataParallel`. Check gradient and update parity against a
+   combined batch, including gradient accumulation and unequal valid-token counts.
+2. **FSDP2.** Use `fully_shard` on decoder blocks. Trace parameter all-gathers and
+   gradient reduce-scatter, and compare peak memory with and without activation
+   checkpointing. Add PyTorch Distributed Checkpoint and test resharded restore.
+3. **Tensor and sequence parallelism.** Use `DeviceMesh`, `DTensor`, and
+   `parallelize_module` with `ColwiseParallel` and `RowwiseParallel` on SwiGLU.
+   Write down shard shapes and reduction boundaries. Then use `SequenceParallel`
+   to shard token-wise normalization and follow the layout changes back to TP.
+4. **Pipeline parallelism.** Split decoder layers using `PipelineStage`. Compare
+   `ScheduleGPipe` with `Schedule1F1B`. Sweep microbatch count and trace stage
+   imbalance, pipeline bubbles, and live activation memory.
+5. **Context parallelism.** Use PyTorch's experimental context-parallel SDPA
+   path. Shard one long sequence, compare with ordinary SDPA, and trace how
+   attention accounts for remote K/V.
+6. **Compose two axes.** Combine FSDP2 and TP on a 2×2 mesh. Explain which ranks
+   process different examples and which share work on a layer. Compare the
+   communication patterns with the existing [expert parallel exercise](moe/README.md).
+
+Start collective size sweeps with DDP and FSDP2. Trace rank skew, overlap, and
+timeouts using a controlled slow-rank case. Use CPU ranks for semantic checks
+where the API supports them and multiple GPUs for NCCL, topology, and scaling
+measurements. Use TorchTitan as a reference for composition.
+
+References: [PyTorch Distributed](https://docs.pytorch.org/docs/stable/distributed.html),
+[FSDP2](https://docs.pytorch.org/docs/stable/distributed.fsdp.fully_shard.html),
+[Distributed Checkpoint](https://docs.pytorch.org/docs/main/distributed/checkpoint.html),
+[TP and sequence parallelism](https://docs.pytorch.org/docs/stable/distributed.tensor.parallel.html),
+[pipelining](https://docs.pytorch.org/docs/stable/distributed.pipelining.html),
+and [context parallelism](https://docs.pytorch.org/tutorials/unstable/context_parallel.html).
 
 ### 22. Efficient inference
 
-- Continuous batching
-- Paged KV caches
-- Prefix caching
-- Decode-time memory-bandwidth bottlenecks
+Build a small inference runtime around the existing cached decoder:
+
+1. Allocate paged KV blocks under a fixed budget. Check logits against the
+   existing cache and verify page reclamation on completion or cancellation.
+2. Add continuous batching and a per-step token budget. Compare against static
+   batching with staggered arrivals and mixed prompt/output lengths.
+3. Add chunked prefill, then prefix reuse and eviction. Measure throughput,
+   time to first token, and inter-token latency, including tails under load.
+4. Profile decode bandwidth and launch overhead. Try shape bucketing and CUDA
+   Graphs once buffer lifetimes and scheduling are stable.
+
+### CUDA kernel engineering
+
+Run this track alongside training profiling and serving. Give each exercise a
+correctness reference and a warmup/timing protocol. Use system traces to find
+the slow region, then inspect the chosen kernel.
+
+1. Build a small CUDA correctness and benchmark harness for reduction, scan,
+   max/argmax, transpose, and Walsh–Hadamard. Include edge sizes where supported
+   and document fixed-shape contracts.
+2. Fuse residual addition and RMSNorm. Check numerical parity and measure bytes
+   moved and achieved bandwidth. Then implement tiled GEMM with a fused
+   epilogue and compare utilization across square and skinny shapes.
+3. Implement MoE token pack/unpack using scans and permutations, then benchmark
+   grouped GEMM under skewed routing and empty experts.
+4. Implement the block-scaled quantization exercise from §20. Sweep shapes
+   and examine the effect of conversion and scaling on memory traffic.
+5. Add paged KV append/gather and streaming top-k. Check page boundaries,
+   exact top-k indices and ties, then profile temporary memory and launch overhead.
 
 ## Advanced architectures and adaptation
 
@@ -466,6 +544,14 @@ and CPU benchmark results are in `moe/README.md` and
 - Tests for log-probability ratios, clipping, masked losses, advantages, and KL
 - PPO versus GRPO memory, compute, stability, and reward-model tradeoffs
 
+#### Rollout infrastructure
+
+- Connect toy generation workers to a learner with a bounded queue. Compare
+  synchronous and asynchronous rollouts, including policy versioning and a
+  staleness limit.
+- Inject slow workers and interrupted rollouts. Test backpressure and recovery,
+  and measure trainer idle time, rollout throughput, and tail completion time.
+
 ### 26. Extended training and evaluation
 
 - Perplexity and evaluation aggregation
@@ -473,7 +559,7 @@ and CPU benchmark results are in `moe/README.md` and
 - Optimizers and learning-rate schedules
 - Weight initialization and residual scaling
 - Regularization and label smoothing
-- Checkpointing optimizer and random-number-generator state
+- Exact resume and checkpointing are covered under [training data and exact resume](#training-data-and-exact-resume)
 - Data leakage and evaluation design
 
 ### 27. Build a small autograd engine
@@ -507,7 +593,9 @@ References:
 byte-level BPE [done] -> generation [done] -> speculative decoding [done]
 -> local/sliding-window attention [done] -> linear attention and KDA [done]
 -> MoE [stages 1–14 educational scope done]
--> FLOP and memory accounting / YaRN / deferred FlashAttention
+-> decoder profiling and memory accounting -> BF16 and activation checkpointing
+-> training data and exact resume -> DDP and FSDP2 -> TP/SP, PP, CP and composition
+-> inference runtime -> rollout infrastructure
 ```
 
 The order is intentional: the completed training loop proves that the decoder
@@ -522,5 +610,6 @@ attention pattern itself and has now been implemented with bounded cache
 memory. The completed linear-attention/KDA track adds fixed-size recurrent
 memory, a full layer resumable across decode calls, and an AI-authored
 chunkwise worked example checked against the recurrence.
-FLOP and memory accounting, YaRN, and the deferred FlashAttention
-implementation remain available subsequent exercises.
+Start the CUDA correctness harness and fused RMSNorm during decoder profiling.
+The CUDA track continues alongside the runtime exercises. YaRN and the deferred
+FlashAttention implementation remain independent exercises.

@@ -1,5 +1,5 @@
 {
-  "reviewed": "2026-11-16",
+  "reviewed": "2026-11-19",
   "lanes": [
     {
       "id": "model",
@@ -129,7 +129,7 @@
           "label": ["Efficient", "inference"],
           "status": "planned",
           "caption": "Paged KV · batching · prefixes",
-          "description": "Explore continuous batching, paged caches, prefix reuse, and decode-time memory-bandwidth bottlenecks. Not yet a completed exercise.",
+          "description": "Build a small decoder runtime with paged KV allocation, continuous batching, chunked prefill, prefix reuse, and latency benchmarks.",
           "links": [["Detailed plan", "ROADMAP.md#22-efficient-inference"]]
         }
       ]
@@ -186,7 +186,6 @@
           "title": "Long-context RoPE",
           "label": ["Long-context", "RoPE / YaRN"],
           "status": "planned",
-          "next": true,
           "caption": "Interpolation vs. extrapolation",
           "description": "Study RoPE extension, frequency-dependent scaling, YaRN, and the effect on original and extended context lengths.",
           "links": [
@@ -250,18 +249,19 @@
         },
         {
           "id": "accounting",
-          "title": "FLOPs & memory",
-          "label": ["FLOPs", "& memory"],
+          "title": "Profiling & memory",
+          "label": ["Profiling", "& memory"],
           "status": "planned",
           "next": true,
-          "caption": "Layer by layer, then end to end",
-          "description": "Extend the completed MoE accounting to every layer: parameters, training states, activations, cache memory, arithmetic intensity, and profiler comparisons.",
+          "caption": "Decoder FLOPs · HBM · step time",
+          "description": "Profile an entire decoder training step and account for FLOPs, activations, parameters, optimizer state, and cache memory. Begin the CUDA correctness and profiling exercises here.",
           "scope": "MoE-specific accounting is already covered; this is the broader decoder-wide exercise.",
           "links": [
             [
               "Detailed plan",
               "ROADMAP.md#17-flop-parameter-and-memory-accounting"
-            ]
+            ],
+            ["CUDA kernels", "ROADMAP.md#cuda-kernel-engineering"]
           ]
         },
         {
@@ -270,7 +270,7 @@
           "label": ["Precision", "& quantization"],
           "status": "planned",
           "caption": "BF16 / FP16 → INT8 / INT4",
-          "description": "Dedicated exercises on mixed precision, loss scaling, accumulation, quantization scales, GPTQ/AWQ concepts, and cache quantization.",
+          "description": "Establish a BF16 training baseline and exercise loss scaling, accumulation, block-scaled quantization, GPTQ/AWQ concepts, and cache quantization.",
           "scope": "Some precision topics appeared in earlier exercises; the dedicated track remains planned.",
           "links": [
             [
@@ -285,8 +285,8 @@
           "title": "Distributed systems",
           "label": ["Distributed", "systems"],
           "status": "planned",
-          "caption": "DP · TP · PP · FSDP",
-          "description": "Expand beyond educational EP to data, tensor, pipeline, sequence/context parallelism and sharded training states.",
+          "caption": "DDP · FSDP2 · TP/SP · PP · CP",
+          "description": "Build native PyTorch data, tensor, sequence, pipeline, and context parallel exercises. Use distributed checkpointing, profile collectives, then compose FSDP2 and TP on a device mesh.",
           "links": [["Detailed plan", "ROADMAP.md#21-distributed-training"]]
         }
       ]
@@ -312,10 +312,11 @@
           "title": "Training & evaluation",
           "label": ["Training", "& evaluation"],
           "status": "planned",
-          "caption": "Schedules · checkpoints · metrics",
-          "description": "Extend the basic training loop with schedules, initialization recipes, optimizer/RNG checkpoints, perplexity, masks and evaluation design.",
+          "caption": "Packed data · exact resume · evaluation",
+          "description": "Build a packed data pipeline and verify exact resume, then develop schedules, initialization recipes, perplexity, masks, and evaluation design.",
           "links": [
-            ["Detailed plan", "ROADMAP.md#26-extended-training-and-evaluation"]
+            ["Exact resume", "ROADMAP.md#training-data-and-exact-resume"],
+            ["Evaluation", "ROADMAP.md#26-extended-training-and-evaluation"]
           ]
         },
         {

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="766" viewBox="0 0 880 766" role="img" aria-labelledby="map-title map-desc">
 <title id="map-title">LLM implementation learning roadmap</title>
-<desc id="map-desc">Build the model: Causal attention (Complete), Norms &amp; MLPs (Complete), Position encodings (Complete), Transformer decoder (Complete), Stable cross-entropy (Complete), Train a decoder (Complete); Make it generate: Byte-level BPE (Complete), KV caching (Complete), MQA &amp; GQA (Complete), Greedy &amp; sampling (Complete), Speculative decoding (Complete), Efficient inference (Planned); Rethink attention: Sliding-window attention (Complete), Linear → DeltaNet (Complete), Kimi Delta Attention (Complete), Latent attention (In progress), Long-context RoPE (Planned), FlashAttention (Deferred); Scale the compute: Mixture of Experts (Complete), Expert parallelism (Complete), LatentMoE &amp; balancing (Complete), FLOPs &amp; memory (Planned), Precision &amp; quantization (Planned), Distributed systems (Planned); Train &amp; adapt: Activation checkpointing (Planned), Training &amp; evaluation (Planned), Fine-tuning (Planned), PPO (Planned), GRPO (Planned), A small autograd engine (Planned). Tracks group topics, not strict prerequisites.</desc>
+<desc id="map-desc">Build the model: Causal attention (Complete), Norms &amp; MLPs (Complete), Position encodings (Complete), Transformer decoder (Complete), Stable cross-entropy (Complete), Train a decoder (Complete); Make it generate: Byte-level BPE (Complete), KV caching (Complete), MQA &amp; GQA (Complete), Greedy &amp; sampling (Complete), Speculative decoding (Complete), Efficient inference (Planned); Rethink attention: Sliding-window attention (Complete), Linear → DeltaNet (Complete), Kimi Delta Attention (Complete), Latent attention (In progress), Long-context RoPE (Planned), FlashAttention (Deferred); Scale the compute: Mixture of Experts (Complete), Expert parallelism (Complete), LatentMoE &amp; balancing (Complete), Profiling &amp; memory (Planned), Precision &amp; quantization (Planned), Distributed systems (Planned); Train &amp; adapt: Activation checkpointing (Planned), Training &amp; evaluation (Planned), Fine-tuning (Planned), PPO (Planned), GRPO (Planned), A small autograd engine (Planned). Tracks group topics, not strict prerequisites.</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f2328}.lane{font-size:19px;font-weight:600}.topic{font-size:15px;font-weight:500}.status{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;letter-spacing:.4px;fill:#59636e}</style>
 <text x="0" y="20" class="lane" >Build the model</text>
 <path d="M22 56 H148" fill="none" stroke="#087f72" stroke-width="1.5" opacity=".65"/>
@@ -120,7 +120,7 @@
 <circle cx="596" cy="356" r="6" fill="none" stroke="#7451ac" stroke-width="1.8"/>
 <text x="590" y="383" class="topic" >Long-context</text>
 <text x="590" y="402" class="topic" >RoPE / YaRN</text>
-<text x="590" y="424" class="status" >NEXT OPTION</text>
+<text x="590" y="424" class="status" >PLANNED</text>
 </g>
 <g data-topic="flash"><title>FlashAttention: Deferred</title>
 <circle cx="742" cy="356" r="6" fill="none" stroke="#7451ac" stroke-width="1.5"/><path d="M740 353 v6 M744 353 v6" stroke="#7451ac" stroke-width="1.3"/>
@@ -151,9 +151,9 @@
 <text x="298" y="574" class="status" >COMPLETE</text>
 </g>
 <path d="M460 506 H586" fill="none" stroke="#8d5909" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5"/>
-<g data-topic="accounting"><title>FLOPs &amp; memory: Planned</title>
+<g data-topic="accounting"><title>Profiling &amp; memory: Planned</title>
 <circle cx="450" cy="506" r="6" fill="none" stroke="#8d5909" stroke-width="1.8"/>
-<text x="444" y="533" class="topic" >FLOPs</text>
+<text x="444" y="533" class="topic" >Profiling</text>
 <text x="444" y="552" class="topic" >&amp; memory</text>
 <text x="444" y="574" class="status" >NEXT OPTION</text>
 </g>

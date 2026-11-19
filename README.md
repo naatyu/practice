@@ -79,10 +79,10 @@ design review connects those components; it is not a production-model reproducti
 Full distributed training, global exact-quantile gathering, and decoder/training
 forwarding of latent/SiTU options remain optional extensions, not stage blockers.
 
-FLOP and memory accounting and YaRN remain subsequent roadmap topics.
-FlashAttention theory and online-softmax notes already exist; its plain-PyTorch
-implementation remains deferred. The complete ordered plan is in
-[ROADMAP.md](ROADMAP.md).
+The infrastructure track starts with decoder profiling and activation
+checkpointing, followed by resumable training and native PyTorch parallelism.
+CUDA kernel exercises run alongside it. The complete order, including inference
+runtime and rollout infrastructure, is in [ROADMAP.md](ROADMAP.md).
 
 ## Repository map
 
