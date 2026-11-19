@@ -30,6 +30,14 @@ or RoPE. I work through it while an AI acts as both an interviewer and a
 learning partner: it asks follow-up questions, challenges incorrect reasoning,
 explains unfamiliar ideas, and helps turn the final answers into useful notes.
 
+For a structured study session in Codex, try `$socratic-tutor` with a topic from
+the roadmap, for example `$socratic-tutor teach me activation checkpointing`.
+The tutor starts with a short diagnostic, asks one question at a time, and
+tracks progress through review and a final assessment. The repo includes
+[Jane Street's original skill](.agents/skills/socratic-tutor/SKILL.md) and its
+[MIT license](.agents/skills/socratic-tutor/LICENSE.md).
+[Upstream revision](https://github.com/janestreet/agent_skills/tree/469868f4489cbdbe178c775a0af05bb6bef63689/socratic-tutor).
+
 Most topic folders follow the same structure:
 
 - `README.md` contains the exercise prompt and discussion questions.
