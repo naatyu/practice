@@ -2,7 +2,8 @@ import math
 
 import torch
 
-from attention.dsa import SimpleIndexer, sparse_attention
+from attention.dsa import LightningIndexer, SimpleIndexer, sparse_attention
+from positional_encoding import RotaryPositionalEncoding
 
 
 def test_causal_selection_ranks_keys_for_each_query() -> None:
@@ -47,6 +48,63 @@ def test_simple_indexer_uses_separate_query_and_key_projections() -> None:
     x = torch.tensor([[1.0, 1.0], [2.0, -1.0], [-1.0, 3.0]])
 
     torch.testing.assert_close(indexer(x), torch.tensor([[0, -1], [0, 1], [1, 0]]))
+
+
+def test_lightning_indexer_combines_rectified_head_scores() -> None:
+    indexer = LightningIndexer(d_model=4, d_indexer=3, n_heads=2, top_k=1)
+    queries = torch.tensor([[2.0, 0, 0, -4, 0, 0], [-2.0, 0, 0, 3, 0, 0]])
+    keys = torch.tensor([[1.0, 0, 0], [-1.0, 0, 0]])
+    weights = torch.tensor([[3.0, -1.0], [2.0, 4.0]])
+    original_weights = weights.clone()
+
+    scores = indexer.index_scores(queries[None], keys[None], weights[None])
+
+    expected = torch.tensor([[6.0, -4.0], [12.0, 4.0]]) / math.sqrt(6)
+    torch.testing.assert_close(scores, expected[None])
+    torch.testing.assert_close(weights, original_weights)
+
+
+def test_lightning_indexer_rotates_only_the_configured_prefix() -> None:
+    rope = RotaryPositionalEncoding(d_head=2, max_seq_len=2)
+    indexer = LightningIndexer(d_model=4, d_indexer=4, n_heads=2, top_k=1, rope=rope)
+    queries = torch.tensor([[1.0, 0, 2, 0, 0, 1, 0, 2]]).repeat(2, 1)
+    keys = torch.tensor([[1.0, 0, 1, 1]]).repeat(2, 1)
+    weights = torch.eye(2)
+
+    scores = indexer.index_scores(queries[None], keys[None], weights[None])
+
+    # One head per row: rotary contributions differ, the plain dot stays 2.
+    expected = torch.tensor([[3.0, 2 + math.cos(1)], [2 - math.sin(1), 2.0]])
+    torch.testing.assert_close(scores, expected[None] / math.sqrt(8))
+
+
+def test_lightning_indexer_ranks_normalized_keys() -> None:
+    indexer = LightningIndexer(d_model=3, d_indexer=3, n_heads=1, top_k=1)
+    with torch.no_grad():
+        indexer.k_proj.weight.copy_(torch.eye(3))
+        indexer.q_proj.weight.copy_(torch.diag(torch.tensor([1.0, 0.0, 0.0])))
+        indexer.head_weights.weight.copy_(torch.tensor([[1.0, 0.0, 0.0]]))
+
+    # The second key has a smaller raw first feature but a larger normalized one.
+    x = torch.tensor([[10.0, 9.0, 8.0], [2.0, -1.0, -1.0]])
+
+    torch.testing.assert_close(indexer(x[None]), torch.tensor([[[0], [1]]]))
+
+
+def test_lightning_indexer_batched_matches_separate_sequences() -> None:
+    rng = torch.Generator().manual_seed(0)
+    rope = RotaryPositionalEncoding(d_head=2, max_seq_len=5)
+    indexer = LightningIndexer(d_model=6, d_indexer=4, n_heads=3, top_k=8, rope=rope)
+    with torch.no_grad():
+        for projection in (indexer.q_proj, indexer.k_proj, indexer.head_weights):
+            projection.weight.copy_(torch.randn(projection.weight.shape, generator=rng))
+    x = torch.randn(2, 5, 6, generator=rng)
+
+    actual = indexer(x)
+    expected = torch.cat([indexer(sequence[None]) for sequence in x], dim=0)
+
+    assert actual.shape == (2, 5, 5)
+    torch.testing.assert_close(actual, expected)
 
 
 def test_sparse_attention_matches_dense_attention_on_selected_keys() -> None:
