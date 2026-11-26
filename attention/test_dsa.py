@@ -2,7 +2,13 @@ import math
 
 import torch
 
-from attention.dsa import LightningIndexer, SimpleIndexer, sparse_attention
+from attention.dsa import (
+    IndexerCache,
+    LightningIndexer,
+    SimpleIndexer,
+    _select_causal_topk,
+    sparse_attention,
+)
 from positional_encoding import RotaryPositionalEncoding
 
 
@@ -107,6 +113,39 @@ def test_lightning_indexer_batched_matches_separate_sequences() -> None:
     torch.testing.assert_close(actual, expected)
 
 
+def test_causal_topk_uses_absolute_positions_for_suffix_queries() -> None:
+    # Queries are at positions 3 and 4. Key 4 scores highest for both queries.
+    scores = torch.tensor([[[0.0, 1.0, 2.0, 3.0, 100.0], [0.0, 1.0, 2.0, 3.0, 100.0]]])
+
+    actual = _select_causal_topk(scores, top_k=2)
+
+    torch.testing.assert_close(actual, torch.tensor([[[3, 2], [4, 3]]]))
+
+
+@torch.no_grad()
+def test_lightning_indexer_cached_chunks_match_full_prefill() -> None:
+    rng = torch.Generator().manual_seed(7)
+    rope = RotaryPositionalEncoding(d_head=2, max_seq_len=5)
+    indexer = LightningIndexer(d_model=6, d_indexer=4, n_heads=3, top_k=2, rope=rope)
+    for projection in (indexer.q_proj, indexer.k_proj, indexer.head_weights):
+        projection.weight.copy_(torch.randn(projection.weight.shape, generator=rng))
+    x = torch.randn(2, 5, 6, generator=rng)
+    cache = IndexerCache()
+
+    # Fill the cache, then append a two-token suffix and a single decode token.
+    for start, end in ((0, 2), (2, 4), (4, 5)):
+        previous_keys = cache.keys
+        actual = indexer(x[:, start:end], cache=cache)
+        # Use the same key count: top-k can break ties differently on wider rows.
+        expected = indexer(x[:, :end])[:, start:end]
+
+        torch.testing.assert_close(actual, expected)
+        assert cache.keys is not None
+        assert cache.keys.shape == (2, end, 4)
+        if previous_keys is not None:
+            torch.testing.assert_close(cache.keys[:, :start], previous_keys)
+
+
 def test_sparse_attention_matches_dense_attention_on_selected_keys() -> None:
     rng = torch.Generator().manual_seed(0)
     queries = torch.randn(4, 3, generator=rng)
@@ -123,3 +162,37 @@ def test_sparse_attention_matches_dense_attention_on_selected_keys() -> None:
     torch.testing.assert_close(
         sparse_attention(queries, keys, values, indices), expected
     )
+
+
+def test_batched_sparse_attention_gathers_within_each_sequence() -> None:
+    queries = torch.zeros(2, 1, 1)
+    keys = torch.zeros(2, 3, 1)
+    values = torch.tensor([[[100.0], [1.0], [3.0]], [[5.0], [50.0], [9.0]]])
+    indices = torch.tensor([[[1, 2, -1]], [[0, 2, -1]]])
+
+    actual = sparse_attention(queries, keys, values, indices)
+
+    # Equal scores average the two selected values, ignoring the unused slot.
+    torch.testing.assert_close(actual, torch.tensor([[[2.0]], [[7.0]]]))
+
+
+@torch.no_grad()
+def test_sparse_attention_with_cached_indexer_matches_prefill_suffix() -> None:
+    rng = torch.Generator().manual_seed(7)
+    rope = RotaryPositionalEncoding(d_head=2, max_seq_len=5)
+    indexer = LightningIndexer(d_model=6, d_indexer=4, n_heads=3, top_k=2, rope=rope)
+    for projection in (indexer.q_proj, indexer.k_proj, indexer.head_weights):
+        projection.weight.copy_(torch.randn(projection.weight.shape, generator=rng))
+    x = torch.randn(2, 5, 6, generator=rng)
+    queries = torch.randn(2, 5, 3, generator=rng)
+    keys = torch.randn(2, 5, 3, generator=rng)
+    values = torch.randn(2, 5, 4, generator=rng)
+    prefix = 3
+    expected = sparse_attention(queries, keys, values, indexer(x))[:, prefix:]
+
+    cache = IndexerCache()
+    indexer(x[:, :prefix], cache=cache)
+    indices = indexer(x[:, prefix:], cache=cache)
+    actual = sparse_attention(queries[:, prefix:], keys, values, indices)
+
+    torch.testing.assert_close(actual, expected)
